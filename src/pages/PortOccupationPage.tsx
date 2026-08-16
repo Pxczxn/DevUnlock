@@ -1,16 +1,29 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Wifi, AlertCircle, Trash2 } from 'lucide-react';
 import { portApi, processApi } from '../api';
+import { saveQueryHistory } from '../historyUtils';
 import type { PortInfo } from '../types';
 
-function PortOccupationPage() {
+interface PortOccupationPageProps {
+  initialQuery?: string;
+}
+
+function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
   const [portInput, setPortInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PortInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const handleQuery = async () => {
-    if (!portInput.trim()) {
+  // 自动执行查询
+  useEffect(() => {
+    if (initialQuery) {
+      setPortInput(initialQuery);
+      handleQueryWithInput(initialQuery);
+    }
+  }, [initialQuery]);
+
+  const handleQueryWithInput = async (input: string) => {
+    if (!input.trim()) {
       setError('请输入端口号');
       return;
     }
@@ -20,11 +33,11 @@ function PortOccupationPage() {
     setResults([]);
 
     try {
-      const input = portInput.trim();
+      const trimmedInput = input.trim();
 
       // Check if it's a port range (e.g., 3000-3010)
-      if (input.includes('-')) {
-        const [start, end] = input.split('-').map(s => parseInt(s.trim()));
+      if (trimmedInput.includes('-')) {
+        const [start, end] = trimmedInput.split('-').map(s => parseInt(s.trim()));
         if (isNaN(start) || isNaN(end) || start < 1 || end > 65535 || start > end) {
           setError('无效的端口范围，格式应为: 3000-3010');
           setLoading(false);
@@ -32,10 +45,11 @@ function PortOccupationPage() {
         }
         const ports = await portApi.queryRange(start, end);
         setResults(ports);
+        saveQueryHistory('port', trimmedInput);
       }
       // Check if it's multiple ports (e.g., 3000,5173,8080)
-      else if (input.includes(',') || input.includes(' ')) {
-        const ports = input
+      else if (trimmedInput.includes(',') || trimmedInput.includes(' ')) {
+        const ports = trimmedInput
           .split(/[,\s]+/)
           .map(s => parseInt(s.trim()))
           .filter(p => !isNaN(p) && p >= 1 && p <= 65535);
@@ -48,10 +62,11 @@ function PortOccupationPage() {
         
         const allResults = await portApi.queryMultiple(ports);
         setResults(allResults);
+        saveQueryHistory('port', trimmedInput);
       }
       // Single port
       else {
-        const port = parseInt(input);
+        const port = parseInt(trimmedInput);
         if (isNaN(port) || port < 1 || port > 65535) {
           setError('端口范围必须为 1 - 65535');
           setLoading(false);
@@ -60,6 +75,7 @@ function PortOccupationPage() {
         
         const portInfo = await portApi.querySingle(port);
         setResults(portInfo);
+        saveQueryHistory('port', trimmedInput);
         
         if (portInfo.length === 0) {
           setError(`端口 ${port} 当前未被占用`);
@@ -72,11 +88,14 @@ function PortOccupationPage() {
     }
   };
 
+  const handleQuery = () => handleQueryWithInput(portInput);
+
   const handleReleasePort = async (port: number) => {
     if (!confirm(`确定要释放端口 ${port} 吗？`)) return;
 
     try {
       await portApi.release(port);
+      // 端口释放后，从结果中移除所有该端口的条目
       setResults(results.filter(r => r.port !== port));
       alert(`端口 ${port} 已释放`);
     } catch (err) {

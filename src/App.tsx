@@ -11,27 +11,38 @@ import { Home, FolderOpen, Wifi, Activity, Clock, Star, Settings } from "lucide-
 
 type Page = 'home' | 'path' | 'port' | 'process' | 'history' | 'favorites' | 'settings';
 
+export interface QueryIntent {
+  type: 'path' | 'port' | 'process';
+  value: string;
+}
+
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [queryIntent, setQueryIntent] = useState<QueryIntent | null>(null);
+
+  const handleNavigate = (page: Page, intent?: QueryIntent) => {
+    setCurrentPage(page);
+    setQueryIntent(intent || null);
+  };
 
   const renderPage = () => {
     switch (currentPage) {
       case 'home':
-        return <HomePage onNavigate={setCurrentPage} />;
+        return <HomePage onNavigate={handleNavigate} />;
       case 'path':
-        return <PathOccupationPage />;
+        return <PathOccupationPage initialQuery={queryIntent?.type === 'path' ? queryIntent.value : undefined} />;
       case 'port':
-        return <PortOccupationPage />;
+        return <PortOccupationPage initialQuery={queryIntent?.type === 'port' ? queryIntent.value : undefined} />;
       case 'process':
-        return <ProcessPage />;
+        return <ProcessPage initialQuery={queryIntent?.type === 'process' ? queryIntent.value : undefined} />;
       case 'history':
-        return <HistoryPage />;
+        return <HistoryPage onNavigate={handleNavigate} />;
       case 'favorites':
-        return <FavoritesPage />;
+        return <FavoritesPage onNavigate={handleNavigate} />;
       case 'settings':
         return <SettingsPage />;
       default:
-        return <HomePage onNavigate={setCurrentPage} />;
+        return <HomePage onNavigate={handleNavigate} />;
     }
   };
 

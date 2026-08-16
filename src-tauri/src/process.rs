@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
 };
@@ -33,7 +33,9 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         if Process32First(snapshot, &mut entry).is_ok() {
             loop {
                 let pid = entry.th32ProcessID;
-                let name = String::from_utf8_lossy(&entry.szExeFile)
+                // 将 i8 数组转换为 u8 数组
+                let name_bytes: Vec<u8> = entry.szExeFile.iter().map(|&b| b as u8).collect();
+                let name = String::from_utf8_lossy(&name_bytes)
                     .trim_end_matches('\0')
                     .to_string();
 
@@ -95,7 +97,7 @@ pub fn get_process_memory(pid: u32) -> Result<u64, String> {
             ..Default::default()
         };
 
-        if K32GetProcessMemoryInfo(process, &mut pmc, pmc.cb).is_ok() {
+        if K32GetProcessMemoryInfo(process, &mut pmc, pmc.cb).as_bool() {
             let _ = CloseHandle(process);
             Ok(pmc.WorkingSetSize as u64)
         } else {
@@ -105,7 +107,53 @@ pub fn get_process_memory(pid: u32) -> Result<u64, String> {
     }
 }
 
+// 系统关键进程列表
+const SYSTEM_CRITICAL_PROCESSES: &[&str] = &[
+    "system",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "services.exe",
+    "lsass.exe",
+    "svchost.exe",
+    "dwm.exe",
+];
+
+// 检查是否为系统关键进程
+pub fn is_system_critical_process(pid: u32, name: &str) -> bool {
+    // PID 0-10 通常是系统保留
+    if pid <= 10 {
+        return true;
+    }
+    
+    // 检查进程名称
+    let name_lower = name.to_lowercase();
+    SYSTEM_CRITICAL_PROCESSES.iter().any(|&critical| {
+        name_lower == critical || name_lower.starts_with(critical)
+    })
+}
+
 pub fn kill_process(pid: u32) -> Result<(), String> {
+    // 获取当前进程 PID，防止自杀
+    let current_pid = std::process::id();
+    if pid == current_pid {
+        return Err("不能结束 DevUnlock 自身进程".to_string());
+    }
+    
+    // 检查是否为系统关键进程
+    if let Ok(processes) = list_processes() {
+        if let Some(process) = processes.iter().find(|p| p.pid == pid) {
+            if is_system_critical_process(pid, &process.name) {
+                return Err(format!(
+                    "拒绝结束系统关键进程: {} (PID: {})",
+                    process.name, pid
+                ));
+            }
+        }
+    }
+    
     unsafe {
         let process = OpenProcess(PROCESS_TERMINATE, false, pid)
             .map_err(|e| format!("Failed to open process for termination: {:?}", e))?;

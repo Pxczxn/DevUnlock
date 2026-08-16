@@ -2,7 +2,7 @@ mod process;
 mod port;
 mod handle;
 
-use process::{ProcessInfo, list_processes, kill_process, kill_process_tree, get_process_path};
+use process::{ProcessInfo, list_processes, kill_process, kill_process_tree};
 use port::{PortInfo, TcpConnection, query_port, query_port_range, get_tcp_connections, get_udp_listeners};
 use handle::{PathOccupation, query_path_occupation, query_file_occupation, check_path_exists, is_directory, is_file};
 
@@ -93,21 +93,50 @@ fn check_is_file(path: String) -> Result<bool, String> {
 // Batch operations
 #[tauri::command]
 fn release_port(port: u16) -> Result<(), String> {
+    // 查询端口占用
     let port_info = query_port(port, None)?;
+    
+    // PID 去重
+    let mut unique_pids = std::collections::HashSet::new();
     for info in port_info {
-        kill_process(info.pid)?;
+        unique_pids.insert(info.pid);
     }
-    Ok(())
+    
+    // 结束所有占用该端口的进程
+    for pid in unique_pids {
+        if let Err(e) = kill_process(pid) {
+            eprintln!("Failed to kill process {}: {}", pid, e);
+            // 继续尝试结束其他进程
+        }
+    }
+    
+    // 二次验证：重新查询端口，确认已释放
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let verify_result = query_port(port, None)?;
+    
+    if verify_result.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("端口 {} 仍被占用，可能需要管理员权限", port))
+    }
 }
 
 #[tauri::command]
-fn release_path(path: String, pids: Vec<u32>) -> Result<(), String> {
+fn release_path(_path: String, pids: Vec<u32>) -> Result<Vec<(u32, bool, String)>, String> {
+    let mut results = Vec::new();
+    
     for pid in pids {
-        if let Err(e) = kill_process(pid) {
-            eprintln!("Failed to kill process {}: {}", pid, e);
+        match kill_process(pid) {
+            Ok(_) => {
+                results.push((pid, true, "成功".to_string()));
+            }
+            Err(e) => {
+                results.push((pid, false, e));
+            }
         }
     }
-    Ok(())
+    
+    Ok(results)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ProcessInfo, PortInfo, TcpConnection, PathOccupation } from './types';
 
+// 批量操作结果
+export interface BatchResult {
+  pid: number;
+  success: boolean;
+  message: string;
+}
+
 // Process APIs
 export const processApi = {
   listAll: () => invoke<ProcessInfo[]>('list_all_processes'),
@@ -29,7 +36,8 @@ export const pathApi = {
   validate: (path: string) => invoke<boolean>('validate_path', { path }),
   isDirectory: (path: string) => invoke<boolean>('check_is_directory', { path }),
   isFile: (path: string) => invoke<boolean>('check_is_file', { path }),
-  release: (path: string, pids: number[]) => invoke<void>('release_path', { path, pids }),
+  release: (path: string, pids: number[]) => 
+    invoke<BatchResult[]>('release_path', { path, pids }),
 };
 
 // Utility functions

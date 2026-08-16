@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Search, FolderOpen, Wifi } from 'lucide-react';
+import type { QueryIntent } from '../App';
 
 interface HomePageProps {
-  onNavigate: (page: 'home' | 'path' | 'port' | 'process' | 'history' | 'favorites' | 'settings') => void;
+  onNavigate: (page: 'home' | 'path' | 'port' | 'process' | 'history' | 'favorites' | 'settings', intent?: QueryIntent) => void;
 }
 
 function HomePage({ onNavigate }: HomePageProps) {
@@ -11,27 +12,25 @@ function HomePage({ onNavigate }: HomePageProps) {
   const handleSearch = () => {
     if (!searchQuery.trim()) return;
 
-    // Auto-detect query type
     const query = searchQuery.trim();
     
     // Check if it's a port number
     if (/^\d+$/.test(query)) {
       const port = parseInt(query);
       if (port >= 1 && port <= 65535) {
-        // Navigate to port page with query
-        onNavigate('port');
+        onNavigate('port', { type: 'port', value: query });
         return;
       }
     }
 
     // Check if it's a path
     if (query.includes('\\') || query.includes('/') || query.includes(':')) {
-      onNavigate('path');
+      onNavigate('path', { type: 'path', value: query });
       return;
     }
 
     // Default to process search
-    onNavigate('process');
+    onNavigate('process', { type: 'process', value: query });
   };
 
   const commonPorts = [3000, 5173, 8080, 8000, 8888, 6379];
@@ -91,10 +90,7 @@ function HomePage({ onNavigate }: HomePageProps) {
               <button
                 key={port}
                 className="btn btn-secondary"
-                onClick={() => {
-                  setSearchQuery(port.toString());
-                  onNavigate('port');
-                }}
+                onClick={() => onNavigate('port', { type: 'port', value: port.toString() })}
               >
                 {port}
               </button>

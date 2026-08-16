@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Star, FolderOpen, Trash2, Plus } from 'lucide-react';
 import type { FavoriteItem } from '../types';
+import type { QueryIntent } from '../App';
 
-function FavoritesPage() {
+interface FavoritesPageProps {
+  onNavigate: (page: 'home' | 'path' | 'port' | 'process' | 'history' | 'favorites' | 'settings', intent?: QueryIntent) => void;
+}
+
+function FavoritesPage({ onNavigate }: FavoritesPageProps) {
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [newFavorite, setNewFavorite] = useState({ name: '', path: '' });
@@ -44,6 +49,10 @@ function FavoritesPage() {
   const deleteFavorite = (id: string) => {
     if (!confirm('确定要删除此收藏吗？')) return;
     saveFavorites(favorites.filter(f => f.id !== id));
+  };
+
+  const queryFavorite = (favorite: FavoriteItem) => {
+    onNavigate('path', { type: 'path', value: favorite.path });
   };
 
   return (
@@ -140,7 +149,11 @@ function FavoritesPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }}>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ flex: 1 }}
+                    onClick={() => queryFavorite(favorite)}
+                  >
                     查询占用
                   </button>
                   <button 

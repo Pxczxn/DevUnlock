@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Clock, FolderOpen, Wifi, Activity, Trash2 } from 'lucide-react';
 import type { HistoryItem } from '../types';
+import type { QueryIntent } from '../App';
 
-function HistoryPage() {
+interface HistoryPageProps {
+  onNavigate: (page: 'home' | 'path' | 'port' | 'process' | 'history' | 'favorites' | 'settings', intent?: QueryIntent) => void;
+}
+
+function HistoryPage({ onNavigate }: HistoryPageProps) {
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
   useEffect(() => {
@@ -26,6 +31,24 @@ function HistoryPage() {
     const newHistory = history.filter(item => item.id !== id);
     setHistory(newHistory);
     localStorage.setItem('devunlock-history', JSON.stringify(newHistory));
+  };
+
+  const replayQuery = (item: HistoryItem) => {
+    let page: 'path' | 'port' | 'process';
+    let intentType: 'path' | 'port' | 'process';
+    
+    if (item.type === 'directory' || item.type === 'file') {
+      page = 'path';
+      intentType = 'path';
+    } else if (item.type === 'port') {
+      page = 'port';
+      intentType = 'port';
+    } else {
+      page = 'process';
+      intentType = 'process';
+    }
+    
+    onNavigate(page, { type: intentType, value: item.query });
   };
 
   const getIcon = (type: string) => {
@@ -79,7 +102,11 @@ function HistoryPage() {
           </div>
         ) : (
           history.map((item) => (
-            <div key={item.id} className="history-item">
+            <div 
+              key={item.id} 
+              className="history-item"
+              onClick={() => replayQuery(item)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{
                   width: '40px',

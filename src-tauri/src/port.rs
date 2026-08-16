@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
-    MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
+    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPTABLE_OWNER_PID,
+    MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
     UDP_TABLE_OWNER_PID,
 };
-use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+use windows::Win32::Networking::WinSock::AF_INET;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortInfo {
@@ -43,15 +43,18 @@ pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
 
         let mut buffer = vec![0u8; size as usize];
         
-        GetExtendedTcpTable(
+        let result = GetExtendedTcpTable(
             Some(buffer.as_mut_ptr() as *mut _),
             &mut size,
             false,
             AF_INET.0 as u32,
             TCP_TABLE_OWNER_PID_ALL,
             0,
-        )
-        .map_err(|e| format!("Failed to get TCP table: {:?}", e))?;
+        );
+        
+        if result != 0 {
+            return Err(format!("Failed to get TCP table: error code {}", result));
+        }
 
         let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
         let entries = std::slice::from_raw_parts(
@@ -97,15 +100,18 @@ pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
 
         let mut buffer = vec![0u8; size as usize];
         
-        GetExtendedUdpTable(
+        let result = GetExtendedUdpTable(
             Some(buffer.as_mut_ptr() as *mut _),
             &mut size,
             false,
             AF_INET.0 as u32,
             UDP_TABLE_OWNER_PID,
             0,
-        )
-        .map_err(|e| format!("Failed to get UDP table: {:?}", e))?;
+        );
+        
+        if result != 0 {
+            return Err(format!("Failed to get UDP table: error code {}", result));
+        }
 
         let table = &*(buffer.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
         let entries = std::slice::from_raw_parts(

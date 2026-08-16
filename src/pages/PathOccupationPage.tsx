@@ -1,17 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, FolderOpen, AlertCircle, Trash2 } from 'lucide-react';
-import { pathApi, processApi, formatBytes } from '../api';
+import { pathApi, processApi } from '../api';
+import { saveQueryHistory } from '../historyUtils';
 import type { PathOccupation } from '../types';
 
-function PathOccupationPage() {
+interface PathOccupationPageProps {
+  initialQuery?: string;
+}
+
+function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
   const [path, setPath] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PathOccupation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedPids, setSelectedPids] = useState<Set<number>>(new Set());
 
-  const handleQuery = async () => {
-    if (!path.trim()) {
+  // 自动执行查询
+  useEffect(() => {
+    if (initialQuery) {
+      setPath(initialQuery);
+      handleQueryWithPath(initialQuery);
+    }
+  }, [initialQuery]);
+
+  const handleQueryWithPath = async (queryPath: string) => {
+    if (!queryPath.trim()) {
       setError('请输入路径');
       return;
     }
@@ -22,19 +35,22 @@ function PathOccupationPage() {
     setSelectedPids(new Set());
 
     try {
-      const exists = await pathApi.validate(path);
+      const exists = await pathApi.validate(queryPath);
       if (!exists) {
         setError('路径不存在');
         setLoading(false);
         return;
       }
 
-      const isDir = await pathApi.isDirectory(path);
+      const isDir = await pathApi.isDirectory(queryPath);
       const occupations = isDir 
-        ? await pathApi.queryPath(path)
-        : await pathApi.queryFile(path);
+        ? await pathApi.queryPath(queryPath)
+        : await pathApi.queryFile(queryPath);
       
       setResults(occupations);
+      
+      // 保存到历史记录
+      saveQueryHistory(isDir ? 'directory' : 'file', queryPath);
       
       if (occupations.length === 0) {
         setError('未发现占用该路径的进程');
@@ -45,6 +61,8 @@ function PathOccupationPage() {
       setLoading(false);
     }
   };
+
+  const handleQuery = () => handleQueryWithPath(path);
 
   const handleKillProcess = async (pid: number) => {
     if (!confirm(`确定要结束进程 ${pid} 吗？`)) return;
@@ -77,9 +95,25 @@ function PathOccupationPage() {
     if (!confirm(`确定要结束选中的 ${selectedPids.size} 个进程吗？`)) return;
 
     try {
-      await pathApi.release(path, Array.from(selectedPids));
-      setResults(results.filter(r => !selectedPids.has(r.pid)));
+      const batchResults = await pathApi.release(path, Array.from(selectedPids));
+      
+      // 统计结果
+      const successPids = batchResults.filter(r => r.success).map(r => r.pid);
+      const failedResults = batchResults.filter(r => !r.success);
+      
+      // 只移除成功结束的进程
+      setResults(results.filter(r => !successPids.includes(r.pid)));
       setSelectedPids(new Set());
+      
+      // 显示结果
+      if (failedResults.length > 0) {
+        const failedMsg = failedResults
+          .map(r => `PID ${r.pid}: ${r.message}`)
+          .join('\n');
+        alert(`部分进程结束失败:\n${failedMsg}\n\n成功: ${successPids.length}/${batchResults.length}`);
+      } else {
+        alert(`成功结束 ${successPids.length} 个进程`);
+      }
     } catch (err) {
       alert(`释放路径失败: ${err instanceof Error ? err.message : '未知错误'}`);
     }

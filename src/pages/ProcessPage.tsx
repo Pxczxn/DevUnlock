@@ -3,7 +3,11 @@ import { Search, Activity, AlertCircle, Trash2 } from 'lucide-react';
 import { processApi, formatBytes } from '../api';
 import type { ProcessInfo } from '../types';
 
-function ProcessPage() {
+interface ProcessPageProps {
+  initialQuery?: string;
+}
+
+function ProcessPage({ initialQuery }: ProcessPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
@@ -13,6 +17,13 @@ function ProcessPage() {
   useEffect(() => {
     loadProcesses();
   }, []);
+
+  // 设置初始查询
+  useEffect(() => {
+    if (initialQuery) {
+      setSearchQuery(initialQuery);
+    }
+  }, [initialQuery]);
 
   useEffect(() => {
     if (searchQuery.trim()) {
