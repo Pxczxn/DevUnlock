@@ -5,6 +5,14 @@ mod handle;
 use process::{ProcessInfo, list_processes, kill_process, kill_process_tree};
 use port::{PortInfo, TcpConnection, query_port, query_port_range, get_tcp_connections, get_udp_listeners};
 use handle::{PathOccupation, query_path_occupation, query_file_occupation, check_path_exists, is_directory, is_file};
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+struct BatchResult {
+    pid: u32,
+    success: bool,
+    message: String,
+}
 
 // Process commands
 #[tauri::command]
@@ -122,16 +130,24 @@ fn release_port(port: u16) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn release_path(_path: String, pids: Vec<u32>) -> Result<Vec<(u32, bool, String)>, String> {
+fn release_path(_path: String, pids: Vec<u32>) -> Result<Vec<BatchResult>, String> {
     let mut results = Vec::new();
     
     for pid in pids {
         match kill_process(pid) {
             Ok(_) => {
-                results.push((pid, true, "成功".to_string()));
+                results.push(BatchResult {
+                    pid,
+                    success: true,
+                    message: "成功".to_string(),
+                });
             }
             Err(e) => {
-                results.push((pid, false, e));
+                results.push(BatchResult {
+                    pid,
+                    success: false,
+                    message: e,
+                });
             }
         }
     }
