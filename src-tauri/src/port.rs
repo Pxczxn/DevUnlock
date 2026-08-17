@@ -302,11 +302,62 @@ pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
 // 查询指定端口（IPv4 + IPv6）
 pub fn query_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo>, String> {
     let mut results = Vec::new();
+    let mut tcp_failed = false;
+    let mut udp_failed = false;
 
     if protocol.is_none() || protocol.as_deref() == Some("TCP") {
-        if let Ok(tcp_connections) = get_tcp_connections() {
+        match get_tcp_connections() {
+            Ok(tcp_connections) => {
+                for conn in tcp_connections {
+                    if conn.local_port == port {
+                        results.push(PortInfo {
+                            port: conn.local_port,
+                            protocol: "TCP".to_string(),
+                            state: conn.state,
+                            local_address: conn.local_address,
+                            remote_address: conn.remote_address,
+                            pid: conn.pid,
+                        });
+                    }
+                }
+            }
+            Err(_) => tcp_failed = true,
+        }
+    }
+
+    if protocol.is_none() || protocol.as_deref() == Some("UDP") {
+        match get_udp_listeners() {
+            Ok(udp_listeners) => {
+                for listener in udp_listeners {
+                    if listener.port == port {
+                        results.push(listener);
+                    }
+                }
+            }
+            Err(_) => udp_failed = true,
+        }
+    }
+    
+    // 如果所有协议栈都查询失败，返回错误
+    if tcp_failed && udp_failed {
+        return Err("无法查询 TCP 和 UDP 端口信息".to_string());
+    }
+    
+    // 如果部分失败但有结果，继续返回（partial success）
+    // 如果查询成功但结果为空，返回空数组（真的未占用）
+    Ok(results)
+}
+
+// 查询端口范围（IPv4 + IPv6）
+pub fn query_port_range(start: u16, end: u16) -> Result<Vec<PortInfo>, String> {
+    let mut results = Vec::new();
+    let mut tcp_failed = false;
+    let mut udp_failed = false;
+
+    match get_tcp_connections() {
+        Ok(tcp_connections) => {
             for conn in tcp_connections {
-                if conn.local_port == port {
+                if conn.local_port >= start && conn.local_port <= end {
                     results.push(PortInfo {
                         port: conn.local_port,
                         protocol: "TCP".to_string(),
@@ -318,46 +369,23 @@ pub fn query_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo>, 
                 }
             }
         }
+        Err(_) => tcp_failed = true,
     }
 
-    if protocol.is_none() || protocol.as_deref() == Some("UDP") {
-        if let Ok(udp_listeners) = get_udp_listeners() {
+    match get_udp_listeners() {
+        Ok(udp_listeners) => {
             for listener in udp_listeners {
-                if listener.port == port {
+                if listener.port >= start && listener.port <= end {
                     results.push(listener);
                 }
             }
         }
+        Err(_) => udp_failed = true,
     }
-
-    Ok(results)
-}
-
-// 查询端口范围（IPv4 + IPv6）
-pub fn query_port_range(start: u16, end: u16) -> Result<Vec<PortInfo>, String> {
-    let mut results = Vec::new();
-
-    if let Ok(tcp_connections) = get_tcp_connections() {
-        for conn in tcp_connections {
-            if conn.local_port >= start && conn.local_port <= end {
-                results.push(PortInfo {
-                    port: conn.local_port,
-                    protocol: "TCP".to_string(),
-                    state: conn.state,
-                    local_address: conn.local_address,
-                    remote_address: conn.remote_address,
-                    pid: conn.pid,
-                });
-            }
-        }
-    }
-
-    if let Ok(udp_listeners) = get_udp_listeners() {
-        for listener in udp_listeners {
-            if listener.port >= start && listener.port <= end {
-                results.push(listener);
-            }
-        }
+    
+    // 如果所有协议栈都查询失败，返回错误
+    if tcp_failed && udp_failed {
+        return Err("无法查询 TCP 和 UDP 端口信息".to_string());
     }
 
     Ok(results)

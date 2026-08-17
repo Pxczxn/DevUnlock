@@ -3,16 +3,19 @@ import { Search, FolderOpen, AlertCircle, Trash2, Shield, ChevronDown, ChevronUp
 import { pathApi, processApi } from '../api';
 import { saveQueryHistory } from '../historyUtils';
 import { isProtectedProcess, getKillableProcesses, getProtectedProcesses } from '../processProtection';
-import type { PathOccupation } from '../types';
+import { formatError } from '../utils/errorUtils';
+import type { PathOccupation, ScanDiagnostics } from '../types';
 
 interface PathOccupationPageProps {
   initialQuery?: string;
 }
 
 function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
-  const [path, setPath] = useState('');
+  const [inputPath, setInputPath] = useState(''); // 输入框路径
+  const [activeTarget, setActiveTarget] = useState(''); // 当前查询结果的路径
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PathOccupation[]>([]);
+  const [diagnostics, setDiagnostics] = useState<ScanDiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedPids, setSelectedPids] = useState<Set<number>>(new Set());
   const [expandedPids, setExpandedPids] = useState<Set<number>>(new Set());
@@ -20,28 +23,33 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
   // 自动执行查询
   useEffect(() => {
     if (initialQuery) {
-      setPath(initialQuery);
+      setInputPath(initialQuery);
       handleQueryWithPath(initialQuery);
     }
   }, [initialQuery]);
 
   // 刷新当前目标（根据类型自动选择 queryPath 或 queryFile）
   const refreshCurrentTarget = async (): Promise<PathOccupation[]> => {
-    if (!path) return [];
+    if (!activeTarget) return [];
     
     try {
       // 判断是目录还是文件
-      const isDir = await pathApi.isDirectory(path);
+      const isDir = await pathApi.isDirectory(activeTarget);
       
-      if (isDir) {
-        return await pathApi.queryPath(path);
-      } else {
-        return await pathApi.queryFile(path);
-      }
+      const result = isDir 
+        ? await pathApi.queryPath(activeTarget)
+        : await pathApi.queryFile(activeTarget);
+      
+      setDiagnostics(result.diagnostics);
+      
+      // 按句柄数量降序排序
+      return result.occupations.sort((a, b) => b.handle_count - a.handle_count);
     } catch (err) {
       // 如果判断失败，默认使用 queryPath
       console.warn('Failed to determine path type, using queryPath:', err);
-      return await pathApi.queryPath(path);
+      const result = await pathApi.queryPath(activeTarget);
+      setDiagnostics(result.diagnostics);
+      return result.occupations.sort((a, b) => b.handle_count - a.handle_count);
     }
   };
 
@@ -92,6 +100,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
     setError(null);
     setResults([]);
     setSelectedPids(new Set());
+    setExpandedPids(new Set()); // 清空展开状态
 
     try {
       const exists = await pathApi.validate(queryPath);
@@ -102,26 +111,31 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       }
 
       const isDir = await pathApi.isDirectory(queryPath);
-      const occupations = isDir 
+      const result = isDir 
         ? await pathApi.queryPath(queryPath)
         : await pathApi.queryFile(queryPath);
       
-      setResults(occupations);
+      // 按句柄数量降序排序
+      const sortedOccupations = result.occupations.sort((a, b) => b.handle_count - a.handle_count);
+      
+      setResults(sortedOccupations);
+      setDiagnostics(result.diagnostics);
+      setActiveTarget(queryPath); // 设置当前活动目标
       
       // 保存到历史记录
       saveQueryHistory(isDir ? 'directory' : 'file', queryPath);
       
-      if (occupations.length === 0) {
+      if (result.occupations.length === 0) {
         setError('未发现占用该路径的进程');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '查询失败');
+      setError(formatError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuery = () => handleQueryWithPath(path);
+  const handleQuery = () => handleQueryWithPath(inputPath);
 
   const handleKillProcess = async (pid: number) => {
     if (!confirm(`确定要结束进程 ${pid} 吗？`)) return;
@@ -135,8 +149,25 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       // 重新查询真实状态
       const newResults = await refreshCurrentTarget();
       setResults(newResults);
+      
+      // 清理该 PID 的选择和展开状态
+      setSelectedPids(prev => {
+        const next = new Set(prev);
+        next.delete(pid);
+        return next;
+      });
+      setExpandedPids(prev => {
+        const next = new Set(prev);
+        next.delete(pid);
+        return next;
+      });
+      
+      // 如果结果为空，显示提示
+      if (newResults.length === 0) {
+        setError('当前无占用进程');
+      }
     } catch (err) {
-      alert(`结束进程失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`结束进程失败: ${formatError(err)}`);
     }
   };
 
@@ -152,8 +183,17 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       // 重新查询真实状态
       const newResults = await refreshCurrentTarget();
       setResults(newResults);
+      
+      // 清理状态
+      setSelectedPids(new Set());
+      setExpandedPids(new Set());
+      
+      // 如果结果为空，显示提示
+      if (newResults.length === 0) {
+        setError('当前无占用进程');
+      }
     } catch (err) {
-      alert(`结束进程树失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`结束进程树失败: ${formatError(err)}`);
     }
   };
 
@@ -170,7 +210,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
 
     try {
       const pids = Array.from(selectedPids);
-      const batchResults = await pathApi.release(path, pids);
+      const batchResults = await pathApi.release(activeTarget, pids);
       
       // 统计结果
       const successCount = batchResults.filter(r => r.success).length;
@@ -184,6 +224,11 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       setResults(newResults);
       setSelectedPids(new Set());
       
+      // 如果结果为空，显示提示
+      if (newResults.length === 0) {
+        setError('当前无占用进程');
+      }
+      
       // 显示结果
       if (failedResults.length > 0) {
         const failedMsg = failedResults
@@ -194,7 +239,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
         alert(`成功释放 ${successCount} 个进程`);
       }
     } catch (err) {
-      alert(`释放路径失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`释放路径失败: ${formatError(err)}`);
     }
   };
 
@@ -217,7 +262,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
 
     try {
       const pids = killable.map(p => p.pid);
-      const batchResults = await pathApi.release(path, pids);
+      const batchResults = await pathApi.release(activeTarget, pids);
       
       // 统计结果
       const successCount = batchResults.filter(r => r.success).length;
@@ -231,6 +276,11 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       setResults(newResults);
       setSelectedPids(new Set());
       
+      // 如果结果为空，显示提示
+      if (newResults.length === 0) {
+        setError('当前无占用进程');
+      }
+      
       // 显示结果
       const remainingMsg = newResults.length > 0 
         ? `\n剩余占用：${newResults.length} 个\n\n${newResults.map((p: PathOccupation) => `• ${p.process_name} (PID ${p.pid})`).join('\n')}`
@@ -238,7 +288,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       
       alert(`释放完成\n\n成功：${successCount} 个\n失败：${failedCount} 个${remainingMsg}`);
     } catch (err) {
-      alert(`一键释放失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`一键释放失败: ${formatError(err)}`);
     }
   };
 
@@ -266,8 +316,8 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
             type="text"
             className="search-input"
             placeholder="输入目录或文件路径，例如：D:\Coding\project\xingyu-community"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
+            value={inputPath}
+            onChange={(e) => setInputPath(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
           />
           <button className="btn btn-primary" onClick={handleQuery} disabled={loading}>
@@ -303,6 +353,15 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
                   <p className="text-muted" style={{ fontSize: '14px' }}>
                     共 {results.reduce((sum, r) => sum + r.handle_count, 0)} 个关联句柄
                   </p>
+                  {diagnostics && (
+                    <p className="text-muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+                      扫描统计: {diagnostics.total_processes} 个进程 · 
+                      {diagnostics.handles_duplicated} 个句柄复制 · 
+                      {diagnostics.handles_resolved} 个解析 · 
+                      {diagnostics.handles_matched} 个匹配
+                      {diagnostics.skipped_access_denied > 0 && ` · ${diagnostics.skipped_access_denied} 个无权限`}
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button 
@@ -492,7 +551,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
           </>
         )}
 
-        {!loading && !error && results.length === 0 && path && (
+        {!loading && !error && results.length === 0 && !activeTarget && (
           <div className="empty-state">
             <FolderOpen size={48} style={{ opacity: 0.5, marginBottom: '16px' }} />
             <p>请输入路径并点击查询</p>

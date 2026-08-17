@@ -14,7 +14,30 @@ function HomePage({ onNavigate }: HomePageProps) {
 
     const query = searchQuery.trim();
     
-    // Check if it's a port number
+    // Check if it's a port-related query
+    // 1. Port range: 3000-3010
+    if (query.includes('-')) {
+      const [start, end] = query.split('-').map(s => parseInt(s.trim()));
+      if (!isNaN(start) && !isNaN(end) && start >= 1 && end <= 65535 && start <= end) {
+        onNavigate('port', { type: 'port', value: query });
+        return;
+      }
+    }
+    
+    // 2. Multiple ports: 3000,5173,8080 or 3000 5173 8080
+    if (query.includes(',') || /^\d+[\s,]+\d+/.test(query)) {
+      const portList = query.split(/[,\s]+/).map(s => s.trim());
+      const allValid = portList.every(s => {
+        const p = parseInt(s);
+        return !isNaN(p) && p >= 1 && p <= 65535;
+      });
+      if (allValid && portList.length > 0) {
+        onNavigate('port', { type: 'port', value: query });
+        return;
+      }
+    }
+    
+    // 3. Single port number
     if (/^\d+$/.test(query)) {
       const port = parseInt(query);
       if (port >= 1 && port <= 65535) {

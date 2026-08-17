@@ -4,7 +4,7 @@ mod handle;
 
 use process::{ProcessInfo, list_processes, kill_process, kill_process_tree};
 use port::{PortInfo, TcpConnection, query_port, query_port_range, get_tcp_connections, get_udp_listeners};
-use handle::{PathOccupation, query_path_occupation, query_file_occupation, check_path_exists, is_directory, is_file};
+use handle::{PathOccupationResult, query_path_occupation, query_file_occupation, check_path_exists, is_directory, is_file};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -37,6 +37,11 @@ fn terminate_process(pid: u32) -> Result<(), String> {
 #[tauri::command]
 fn terminate_process_tree(pid: u32) -> Result<(), String> {
     kill_process_tree(pid)
+}
+
+#[tauri::command]
+fn check_process_protected(pid: u32, name: String) -> bool {
+    process::check_process_protected(pid, &name)
 }
 
 // Port commands
@@ -74,12 +79,12 @@ fn get_all_udp_listeners() -> Result<Vec<PortInfo>, String> {
 
 // Path/File occupation commands
 #[tauri::command]
-fn query_path(path: String) -> Result<Vec<PathOccupation>, String> {
+fn query_path(path: String) -> Result<PathOccupationResult, String> {
     query_path_occupation(&path)
 }
 
 #[tauri::command]
-fn query_file(path: String) -> Result<Vec<PathOccupation>, String> {
+fn query_file(path: String) -> Result<PathOccupationResult, String> {
     query_file_occupation(&path)
 }
 
@@ -130,10 +135,33 @@ fn release_port(port: u16) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn release_path(_path: String, pids: Vec<u32>) -> Result<Vec<BatchResult>, String> {
+fn release_path(path: String, pids: Vec<u32>) -> Result<Vec<BatchResult>, String> {
+    // 重新查询当前路径的真实占用情况
+    let current_occupations = query_path_occupation(&path)
+        .or_else(|_| query_file_occupation(&path))
+        .map_err(|e| format!("无法查询路径占用: {}", e))?;
+    
+    // 获取当前路径真实占用的 PID 集合
+    let valid_pids: std::collections::HashSet<u32> = current_occupations
+        .occupations
+        .iter()
+        .map(|occ| occ.pid)
+        .collect();
+    
     let mut results = Vec::new();
     
     for pid in pids {
+        // 验证 PID 是否属于当前路径
+        if !valid_pids.contains(&pid) {
+            results.push(BatchResult {
+                pid,
+                success: false,
+                message: format!("PID {} 不属于路径 {} 的占用进程", pid, path),
+            });
+            continue;
+        }
+        
+        // 执行结束进程
         match kill_process(pid) {
             Ok(_) => {
                 results.push(BatchResult {
@@ -166,6 +194,7 @@ pub fn run() {
             get_process_info,
             terminate_process,
             terminate_process_tree,
+            check_process_protected,
             query_single_port,
             query_multiple_ports,
             query_ports_range,

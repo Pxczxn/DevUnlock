@@ -119,8 +119,9 @@ pub fn get_process_memory(pid: u32) -> Result<u64, String> {
     }
 }
 
-// 系统关键进程列表
+// 系统关键进程列表 - 与前端保持一致
 const SYSTEM_CRITICAL_PROCESSES: &[&str] = &[
+    "devunlock.exe",
     "system",
     "registry",
     "smss.exe",
@@ -131,6 +132,8 @@ const SYSTEM_CRITICAL_PROCESSES: &[&str] = &[
     "lsass.exe",
     "svchost.exe",
     "dwm.exe",
+    "fontdrvhost.exe",
+    "conhost.exe",
 ];
 
 // 检查是否为系统关键进程
@@ -148,6 +151,11 @@ pub fn is_system_critical_process(pid: u32, name: &str) -> bool {
     })
 }
 
+// 公开 API 供前端查询保护状态
+pub fn check_process_protected(pid: u32, name: &str) -> bool {
+    is_system_critical_process(pid, name)
+}
+
 pub fn kill_process(pid: u32) -> Result<(), String> {
     // 获取当前进程 PID，防止自杀
     let current_pid = std::process::id();
@@ -155,16 +163,20 @@ pub fn kill_process(pid: u32) -> Result<(), String> {
         return Err("不能结束 DevUnlock 自身进程".to_string());
     }
     
-    // 检查是否为系统关键进程
-    if let Ok(processes) = list_processes() {
-        if let Some(process) = processes.iter().find(|p| p.pid == pid) {
-            if is_system_critical_process(pid, &process.name) {
-                return Err(format!(
-                    "拒绝结束系统关键进程: {} (PID: {})",
-                    process.name, pid
-                ));
-            }
+    // 检查是否为系统关键进程 - fail-safe: 无法确认时拒绝
+    let processes = list_processes()
+        .map_err(|_| "无法枚举进程列表，出于安全考虑拒绝操作".to_string())?;
+    
+    if let Some(process) = processes.iter().find(|p| p.pid == pid) {
+        if is_system_critical_process(pid, &process.name) {
+            return Err(format!(
+                "拒绝结束系统关键进程: {} (PID: {})",
+                process.name, pid
+            ));
         }
+    } else {
+        // 找不到进程信息，出于安全考虑拒绝
+        return Err(format!("无法获取进程 {} 的信息，拒绝操作", pid));
     }
     
     unsafe {
@@ -193,25 +205,56 @@ pub fn get_process_tree(processes: &[ProcessInfo]) -> HashMap<u32, Vec<u32>> {
 pub fn kill_process_tree(pid: u32) -> Result<(), String> {
     let processes = list_processes()?;
     let tree = get_process_tree(&processes);
+    
+    // 先检查根节点是否受保护，如果是则立即拒绝
+    if let Some(root_process) = processes.iter().find(|p| p.pid == pid) {
+        if is_system_critical_process(pid, &root_process.name) {
+            return Err(format!(
+                "拒绝结束系统关键进程树: {} (PID: {})",
+                root_process.name, pid
+            ));
+        }
+    }
+    
+    // 构建进程信息映射，用于快速查找
+    let process_map: HashMap<u32, &ProcessInfo> = processes
+        .iter()
+        .map(|p| (p.pid, p))
+        .collect();
 
     fn kill_recursive(
         pid: u32,
         tree: &HashMap<u32, Vec<u32>>,
+        process_map: &HashMap<u32, &ProcessInfo>,
         errors: &mut Vec<String>,
     ) {
+        // 先检查当前节点是否受保护
+        if let Some(process) = process_map.get(&pid) {
+            if is_system_critical_process(pid, &process.name) {
+                // 受保护的子进程，跳过整个子树
+                errors.push(format!(
+                    "跳过受保护进程及其子树: {} (PID: {})",
+                    process.name, pid
+                ));
+                return;
+            }
+        }
+        
+        // 递归处理子进程
         if let Some(children) = tree.get(&pid) {
             for &child_pid in children {
-                kill_recursive(child_pid, tree, errors);
+                kill_recursive(child_pid, tree, process_map, errors);
             }
         }
 
+        // 最后结束当前进程
         if let Err(e) = kill_process(pid) {
             errors.push(format!("Failed to kill process {}: {}", pid, e));
         }
     }
 
     let mut errors = Vec::new();
-    kill_recursive(pid, &tree, &mut errors);
+    kill_recursive(pid, &tree, &process_map, &mut errors);
 
     if errors.is_empty() {
         Ok(())

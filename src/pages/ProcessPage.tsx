@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Search, Activity, AlertCircle, Trash2 } from 'lucide-react';
+import { Search, Activity, AlertCircle, Shield } from 'lucide-react';
 import { processApi, formatBytes } from '../api';
+import { saveQueryHistory } from '../historyUtils';
+import { isProtectedProcess } from '../processProtection';
+import { formatError } from '../utils/errorUtils';
 import type { ProcessInfo } from '../types';
+import type { PathOccupation } from '../types';
 
 interface ProcessPageProps {
   initialQuery?: string;
@@ -28,12 +32,15 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
   useEffect(() => {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      const filtered = processes.filter(p => 
+      const filtered = processes.filter(p =>
         p.name.toLowerCase().includes(query) ||
         p.path.toLowerCase().includes(query) ||
         p.pid.toString().includes(query)
       );
       setFilteredProcesses(filtered);
+      
+      // 保存搜索历史
+      saveQueryHistory('process', searchQuery);
     } else {
       setFilteredProcesses(processes);
     }
@@ -44,10 +51,12 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
     setError(null);
     try {
       const allProcesses = await processApi.listAll();
-      setProcesses(allProcesses);
-      setFilteredProcesses(allProcesses);
+      // 按内存使用量降序排序
+      const sortedProcesses = allProcesses.sort((a, b) => b.memory - a.memory);
+      setProcesses(sortedProcesses);
+      setFilteredProcesses(sortedProcesses);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载进程列表失败');
+      setError(formatError(err));
     } finally {
       setLoading(false);
     }
@@ -58,10 +67,16 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
 
     try {
       await processApi.terminate(pid);
-      setProcesses(processes.filter(p => p.pid !== pid));
+      
+      // 等待系统稳定
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // 重新查询真实状态
+      await loadProcesses();
+      
       alert('进程已结束');
     } catch (err) {
-      alert(`结束进程失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`结束进程失败: ${formatError(err)}`);
     }
   };
 
@@ -70,10 +85,16 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
 
     try {
       await processApi.terminateTree(pid);
-      setProcesses(processes.filter(p => p.pid !== pid));
+      
+      // 等待系统稳定
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // 重新查询真实状态
+      await loadProcesses();
+      
       alert('进程树已结束');
     } catch (err) {
-      alert(`结束进程树失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`结束进程树失败: ${formatError(err)}`);
     }
   };
 
@@ -118,13 +139,31 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
               </h2>
             </div>
 
-            {filteredProcesses.map((process) => (
+            {filteredProcesses.map((process) => {
+              // 检查是否受保护
+              const processOccupation: PathOccupation = {
+                pid: process.pid,
+                process_name: process.name,
+                process_path: process.path,
+                handles: [],
+                handle_count: 0
+              };
+              const isProtected = isProtectedProcess(processOccupation);
+              
+              return (
               <div key={process.pid} className="process-card">
                 <div className="process-card-header">
                   <div className="process-info">
-                    <Activity size={20} color="#2563eb" />
+                    {isProtected ? (
+                      <Shield size={20} color="#ef4444" />
+                    ) : (
+                      <Activity size={20} color="#2563eb" />
+                    )}
                     <div>
-                      <div className="process-name">{process.name}</div>
+                      <div className="process-name">
+                        {process.name}
+                        {isProtected && <span style={{ marginLeft: '8px', color: '#ef4444', fontSize: '12px' }}>[受保护]</span>}
+                      </div>
                       <div className="text-muted" style={{ fontSize: '12px' }}>
                         {process.path || '路径不可用'}
                       </div>
@@ -152,19 +191,22 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
                   <button 
                     className="btn btn-danger"
                     onClick={() => handleKillProcess(process.pid, process.name)}
+                    disabled={isProtected}
+                    style={{ opacity: isProtected ? 0.5 : 1, cursor: isProtected ? 'not-allowed' : 'pointer' }}
                   >
-                    <Trash2 size={18} />
                     结束进程
                   </button>
                   <button 
                     className="btn btn-secondary"
                     onClick={() => handleKillProcessTree(process.pid, process.name)}
+                    disabled={isProtected}
+                    style={{ opacity: isProtected ? 0.5 : 1, cursor: isProtected ? 'not-allowed' : 'pointer' }}
                   >
                     结束进程树
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
 
             {filteredProcesses.length === 0 && searchQuery && (
               <div className="empty-state">

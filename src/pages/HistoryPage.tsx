@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Clock, FolderOpen, Wifi, Activity, Trash2 } from 'lucide-react';
+import { getQueryHistory } from '../historyUtils';
 import type { HistoryItem } from '../types';
 import type { QueryIntent } from '../App';
 
@@ -15,10 +16,11 @@ function HistoryPage({ onNavigate }: HistoryPageProps) {
   }, []);
 
   const loadHistory = () => {
-    const savedHistory = localStorage.getItem('devunlock-history');
-    if (savedHistory) {
-      setHistory(JSON.parse(savedHistory));
-    }
+    // 使用安全解析而不是裸 JSON.parse
+    const history = getQueryHistory();
+    // 按时间戳降序排序（最新的在前）
+    const sortedHistory = history.sort((a, b) => b.timestamp - a.timestamp);
+    setHistory(sortedHistory);
   };
 
   const clearHistory = () => {
@@ -27,7 +29,10 @@ function HistoryPage({ onNavigate }: HistoryPageProps) {
     setHistory([]);
   };
 
-  const deleteItem = (id: string) => {
+  const deleteItem = (id: string, e: React.MouseEvent) => {
+    // 阻止冒泡，避免触发 replayQuery
+    e.stopPropagation();
+    
     const newHistory = history.filter(item => item.id !== id);
     setHistory(newHistory);
     localStorage.setItem('devunlock-history', JSON.stringify(newHistory));
@@ -129,7 +134,7 @@ function HistoryPage({ onNavigate }: HistoryPageProps) {
               </div>
               <button
                 className="btn btn-secondary"
-                onClick={() => deleteItem(item.id)}
+                onClick={(e) => deleteItem(item.id, e)}
                 style={{ padding: '8px 16px' }}
               >
                 <Trash2 size={16} />

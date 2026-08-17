@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Wifi, AlertCircle, Trash2 } from 'lucide-react';
 import { portApi, processApi } from '../api';
 import { saveQueryHistory } from '../historyUtils';
+import { formatError } from '../utils/errorUtils';
 import type { PortInfo } from '../types';
 
 interface PortOccupationPageProps {
@@ -44,25 +45,41 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
           return;
         }
         const ports = await portApi.queryRange(start, end);
-        setResults(ports);
+        // 按端口号升序排序
+        const sortedPorts = ports.sort((a, b) => a.port - b.port);
+        setResults(sortedPorts);
         saveQueryHistory('port', trimmedInput);
+        
+        if (ports.length === 0) {
+          setError(`端口范围 ${start}-${end} 当前未被占用`);
+        }
       }
       // Check if it's multiple ports (e.g., 3000,5173,8080)
       else if (trimmedInput.includes(',') || trimmedInput.includes(' ')) {
-        const ports = trimmedInput
-          .split(/[,\s]+/)
-          .map(s => parseInt(s.trim()))
-          .filter(p => !isNaN(p) && p >= 1 && p <= 65535);
+        const portList = trimmedInput.split(/[,\s]+/).map(s => s.trim());
         
-        if (ports.length === 0) {
-          setError('无效的端口列表');
+        // 验证所有端口是否合法
+        const invalidPorts = portList.filter(s => {
+          const p = parseInt(s);
+          return isNaN(p) || p < 1 || p > 65535;
+        });
+        
+        if (invalidPorts.length > 0) {
+          setError(`无效的端口号: ${invalidPorts.join(', ')}`);
           setLoading(false);
           return;
         }
         
+        const ports = portList.map(s => parseInt(s));
         const allResults = await portApi.queryMultiple(ports);
-        setResults(allResults);
+        // 按端口号升序排序
+        const sortedResults = allResults.sort((a, b) => a.port - b.port);
+        setResults(sortedResults);
         saveQueryHistory('port', trimmedInput);
+        
+        if (allResults.length === 0) {
+          setError(`端口 ${trimmedInput} 当前未被占用`);
+        }
       }
       // Single port
       else {
@@ -82,7 +99,7 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '查询失败');
+      setError(formatError(err));
     } finally {
       setLoading(false);
     }
@@ -95,11 +112,16 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
 
     try {
       await portApi.release(port);
-      // 端口释放后，从结果中移除所有该端口的条目
-      setResults(results.filter(r => r.port !== port));
+      
+      // 等待系统稳定
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // 重新查询当前输入
+      await handleQueryWithInput(portInput);
+      
       alert(`端口 ${port} 已释放`);
     } catch (err) {
-      alert(`释放端口失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`释放端口失败: ${formatError(err)}`);
     }
   };
 
@@ -108,10 +130,16 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
 
     try {
       await processApi.terminate(pid);
-      setResults(results.filter(r => r.pid !== pid));
-      alert('进程已结束');
+      
+      // 等待系统稳定
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // 重新查询当前输入
+      await handleQueryWithInput(portInput);
+      
+      alert(`进程 ${pid} 已结束`);
     } catch (err) {
-      alert(`结束进程失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`结束进程失败: ${formatError(err)}`);
     }
   };
 

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ProcessInfo, PortInfo, TcpConnection, PathOccupation } from './types';
+import type { ProcessInfo, PortInfo, TcpConnection, PathOccupationResult } from './types';
 
 // 批量操作结果
 export interface BatchResult {
@@ -31,8 +31,8 @@ export const portApi = {
 
 // Path/File APIs
 export const pathApi = {
-  queryPath: (path: string) => invoke<PathOccupation[]>('query_path', { path }),
-  queryFile: (path: string) => invoke<PathOccupation[]>('query_file', { path }),
+  queryPath: (path: string) => invoke<PathOccupationResult>('query_path', { path }),
+  queryFile: (path: string) => invoke<PathOccupationResult>('query_file', { path }),
   validate: (path: string) => invoke<boolean>('validate_path', { path }),
   isDirectory: (path: string) => invoke<boolean>('check_is_directory', { path }),
   isFile: (path: string) => invoke<boolean>('check_is_file', { path }),

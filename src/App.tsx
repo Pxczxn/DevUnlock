@@ -53,49 +53,49 @@ function App() {
         <nav className="sidebar-nav">
           <button
             className={`nav-item ${currentPage === 'home' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('home')}
+            onClick={() => handleNavigate('home')}
           >
             <Home size={20} />
             <span>首页</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'path' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('path')}
+            onClick={() => handleNavigate('path')}
           >
             <FolderOpen size={20} />
             <span>路径占用</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'port' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('port')}
+            onClick={() => handleNavigate('port')}
           >
             <Wifi size={20} />
             <span>端口占用</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'process' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('process')}
+            onClick={() => handleNavigate('process')}
           >
             <Activity size={20} />
             <span>进程</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'history' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('history')}
+            onClick={() => handleNavigate('history')}
           >
             <Clock size={20} />
             <span>历史记录</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'favorites' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('favorites')}
+            onClick={() => handleNavigate('favorites')}
           >
             <Star size={20} />
             <span>收藏</span>
           </button>
           <button
             className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('settings')}
+            onClick={() => handleNavigate('settings')}
           >
             <Settings size={20} />
             <span>设置</span>

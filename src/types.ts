@@ -38,6 +38,19 @@ export interface PathOccupation {
   handle_count: number;
 }
 
+export interface ScanDiagnostics {
+  total_processes: number;
+  skipped_access_denied: number;
+  handles_duplicated: number;
+  handles_resolved: number;
+  handles_matched: number;
+}
+
+export interface PathOccupationResult {
+  occupations: PathOccupation[];
+  diagnostics: ScanDiagnostics;
+}
+
 export interface HistoryItem {
   id: string;
   type: 'directory' | 'file' | 'port' | 'process';

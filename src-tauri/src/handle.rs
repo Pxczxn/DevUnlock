@@ -96,6 +96,21 @@ pub struct PathOccupation {
     pub handle_count: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanDiagnostics {
+    pub total_processes: usize,
+    pub skipped_access_denied: usize,
+    pub handles_duplicated: usize,
+    pub handles_resolved: usize,
+    pub handles_matched: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathOccupationResult {
+    pub occupations: Vec<PathOccupation>,
+    pub diagnostics: ScanDiagnostics,
+}
+
 // RAII Handle 包装器，自动关闭
 struct AutoHandle(HANDLE);
 
@@ -226,8 +241,17 @@ fn is_path_match(file_path: &str, target_path: &str) -> bool {
 }
 
 // 主查询函数
-pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> {
+pub fn query_path_occupation(path: &str) -> Result<PathOccupationResult, String> {
     let normalized_target = normalize_path(path);
+    
+    // 诊断统计
+    let mut diagnostics = ScanDiagnostics {
+        total_processes: 0,
+        skipped_access_denied: 0,
+        handles_duplicated: 0,
+        handles_resolved: 0,
+        handles_matched: 0,
+    };
     
     // 查询系统所有 Handle
     let all_handles = query_system_handles()?;
@@ -238,6 +262,8 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
         let pid = handle.unique_process_id as u32;
         handles_by_pid.entry(pid).or_insert_with(Vec::new).push(handle);
     }
+    
+    diagnostics.total_processes = handles_by_pid.len();
     
     // 结果集合
     let mut results: HashMap<u32, PathOccupation> = HashMap::new();
@@ -252,16 +278,25 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
                 pid,
             ) {
                 Ok(p) => p,
-                Err(_) => continue, // 无权限，跳过
+                Err(_) => {
+                    diagnostics.skipped_access_denied += 1;
+                    continue;
+                }
             };
             
             let _auto_process = AutoHandle::new(process);
             
             // 遍历该进程的所有 Handle
             for handle in handles {
+                diagnostics.handles_duplicated += 1;
+                
                 if let Some(file_path) = get_handle_path(process, handle.handle_value) {
+                    diagnostics.handles_resolved += 1;
+                    
                     // 检查路径是否匹配
                     if is_path_match(&file_path, &normalized_target) {
+                        diagnostics.handles_matched += 1;
+                        
                         let entry = results.entry(pid).or_insert_with(|| {
                             let process_path = crate::process::get_process_path(pid)
                                 .unwrap_or_default();
@@ -292,10 +327,13 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
         }
     }
     
-    Ok(results.into_values().collect())
+    Ok(PathOccupationResult {
+        occupations: results.into_values().collect(),
+        diagnostics,
+    })
 }
 
-pub fn query_file_occupation(file_path: &str) -> Result<Vec<PathOccupation>, String> {
+pub fn query_file_occupation(file_path: &str) -> Result<PathOccupationResult, String> {
     query_path_occupation(file_path)
 }
 

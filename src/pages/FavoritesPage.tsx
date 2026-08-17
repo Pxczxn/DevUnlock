@@ -17,9 +17,23 @@ function FavoritesPage({ onNavigate }: FavoritesPageProps) {
   }, []);
 
   const loadFavorites = () => {
-    const savedFavorites = localStorage.getItem('devunlock-favorites');
-    if (savedFavorites) {
-      setFavorites(JSON.parse(savedFavorites));
+    try {
+      const savedFavorites = localStorage.getItem('devunlock-favorites');
+      if (savedFavorites) {
+        const parsed = JSON.parse(savedFavorites);
+        if (Array.isArray(parsed)) {
+          // 去重：基于 path
+          const uniqueFavorites = parsed.filter((item, index, self) =>
+            index === self.findIndex(f => f.path === item.path)
+          );
+          setFavorites(uniqueFavorites);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load favorites:', err);
+      // 损坏时清空
+      localStorage.removeItem('devunlock-favorites');
+      setFavorites([]);
     }
   };
 
@@ -29,15 +43,24 @@ function FavoritesPage({ onNavigate }: FavoritesPageProps) {
   };
 
   const addFavorite = () => {
-    if (!newFavorite.name || !newFavorite.path) {
+    const name = newFavorite.name.trim();
+    const path = newFavorite.path.trim();
+    
+    if (!name || !path) {
       alert('请输入名称和路径');
+      return;
+    }
+    
+    // 检查是否已存在
+    if (favorites.some(f => f.path === path)) {
+      alert('该路径已存在于收藏夹');
       return;
     }
 
     const favorite: FavoriteItem = {
       id: Date.now().toString(),
-      name: newFavorite.name,
-      path: newFavorite.path,
+      name,
+      path,
       type: 'directory',
     };
 
