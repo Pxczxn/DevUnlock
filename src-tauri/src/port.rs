@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPTABLE_OWNER_PID,
-    MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
-    UDP_TABLE_OWNER_PID,
+    GetExtendedTcpTable, GetExtendedUdpTable, 
+    MIB_TCPTABLE_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
+    MIB_UDPTABLE_OWNER_PID, MIB_UDP6TABLE_OWNER_PID,
+    TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
 };
-use windows::Win32::Networking::WinSock::AF_INET;
+use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortInfo {
@@ -27,11 +28,11 @@ pub struct TcpConnection {
     pub pid: u32,
 }
 
-pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
+// IPv4 TCP 连接
+fn get_tcp_connections_v4() -> Result<Vec<TcpConnection>, String> {
     unsafe {
         let mut size: u32 = 0;
         
-        // Get the required buffer size
         let _ = GetExtendedTcpTable(
             None,
             &mut size,
@@ -53,7 +54,7 @@ pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
         );
         
         if result != 0 {
-            return Err(format!("Failed to get TCP table: error code {}", result));
+            return Err(format!("Failed to get IPv4 TCP table: error code {}", result));
         }
 
         let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
@@ -85,7 +86,88 @@ pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
     }
 }
 
-pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
+// IPv6 TCP 连接
+fn get_tcp_connections_v6() -> Result<Vec<TcpConnection>, String> {
+    unsafe {
+        let mut size: u32 = 0;
+        
+        let _ = GetExtendedTcpTable(
+            None,
+            &mut size,
+            false,
+            AF_INET6.0 as u32,
+            TCP_TABLE_OWNER_PID_ALL,
+            0,
+        );
+
+        let mut buffer = vec![0u8; size as usize];
+        
+        let result = GetExtendedTcpTable(
+            Some(buffer.as_mut_ptr() as *mut _),
+            &mut size,
+            false,
+            AF_INET6.0 as u32,
+            TCP_TABLE_OWNER_PID_ALL,
+            0,
+        );
+        
+        if result != 0 {
+            return Err(format!("Failed to get IPv6 TCP table: error code {}", result));
+        }
+
+        let table = &*(buffer.as_ptr() as *const MIB_TCP6TABLE_OWNER_PID);
+        let entries = std::slice::from_raw_parts(
+            table.table.as_ptr(),
+            table.dwNumEntries as usize,
+        );
+
+        let connections = entries
+            .iter()
+            .map(|entry| {
+                // IPv6 地址是 16 字节数组
+                let local_addr = IpAddr::from(entry.ucLocalAddr);
+                let remote_addr = IpAddr::from(entry.ucRemoteAddr);
+                let local_port = u16::from_be((entry.dwLocalPort as u16).to_le());
+                let remote_port = u16::from_be((entry.dwRemotePort as u16).to_le());
+
+                TcpConnection {
+                    local_address: format!("[{}]", local_addr),  // IPv6 用方括号
+                    local_port,
+                    remote_address: format!("[{}]", remote_addr),
+                    remote_port,
+                    state: get_tcp_state(entry.dwState),
+                    pid: entry.dwOwningPid,
+                }
+            })
+            .collect();
+
+        Ok(connections)
+    }
+}
+
+// 合并 IPv4 和 IPv6 TCP 连接
+pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
+    let mut all_connections = Vec::new();
+    
+    // IPv4
+    if let Ok(v4) = get_tcp_connections_v4() {
+        all_connections.extend(v4);
+    }
+    
+    // IPv6
+    if let Ok(v6) = get_tcp_connections_v6() {
+        all_connections.extend(v6);
+    }
+    
+    if all_connections.is_empty() {
+        return Err("Failed to get any TCP connections".to_string());
+    }
+    
+    Ok(all_connections)
+}
+
+// IPv4 UDP 监听
+fn get_udp_listeners_v4() -> Result<Vec<PortInfo>, String> {
     unsafe {
         let mut size: u32 = 0;
         
@@ -110,7 +192,7 @@ pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
         );
         
         if result != 0 {
-            return Err(format!("Failed to get UDP table: error code {}", result));
+            return Err(format!("Failed to get IPv4 UDP table: error code {}", result));
         }
 
         let table = &*(buffer.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
@@ -140,13 +222,124 @@ pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
     }
 }
 
+// IPv6 UDP 监听
+fn get_udp_listeners_v6() -> Result<Vec<PortInfo>, String> {
+    unsafe {
+        let mut size: u32 = 0;
+        
+        let _ = GetExtendedUdpTable(
+            None,
+            &mut size,
+            false,
+            AF_INET6.0 as u32,
+            UDP_TABLE_OWNER_PID,
+            0,
+        );
+
+        let mut buffer = vec![0u8; size as usize];
+        
+        let result = GetExtendedUdpTable(
+            Some(buffer.as_mut_ptr() as *mut _),
+            &mut size,
+            false,
+            AF_INET6.0 as u32,
+            UDP_TABLE_OWNER_PID,
+            0,
+        );
+        
+        if result != 0 {
+            return Err(format!("Failed to get IPv6 UDP table: error code {}", result));
+        }
+
+        let table = &*(buffer.as_ptr() as *const MIB_UDP6TABLE_OWNER_PID);
+        let entries = std::slice::from_raw_parts(
+            table.table.as_ptr(),
+            table.dwNumEntries as usize,
+        );
+
+        let listeners = entries
+            .iter()
+            .map(|entry| {
+                let local_addr = IpAddr::from(entry.ucLocalAddr);
+                let local_port = u16::from_be((entry.dwLocalPort as u16).to_le());
+
+                PortInfo {
+                    port: local_port,
+                    protocol: "UDP".to_string(),
+                    state: "LISTENING".to_string(),
+                    local_address: format!("[{}]", local_addr),  // IPv6 用方括号
+                    remote_address: String::new(),
+                    pid: entry.dwOwningPid,
+                }
+            })
+            .collect();
+
+        Ok(listeners)
+    }
+}
+
+// 合并 IPv4 和 IPv6 UDP 监听
+pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
+    let mut all_listeners = Vec::new();
+    
+    // IPv4
+    if let Ok(v4) = get_udp_listeners_v4() {
+        all_listeners.extend(v4);
+    }
+    
+    // IPv6
+    if let Ok(v6) = get_udp_listeners_v6() {
+        all_listeners.extend(v6);
+    }
+    
+    if all_listeners.is_empty() {
+        return Err("Failed to get any UDP listeners".to_string());
+    }
+    
+    Ok(all_listeners)
+}
+
+// 查询指定端口（IPv4 + IPv6）
 pub fn query_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo>, String> {
     let mut results = Vec::new();
 
     if protocol.is_none() || protocol.as_deref() == Some("TCP") {
-        let tcp_connections = get_tcp_connections()?;
+        if let Ok(tcp_connections) = get_tcp_connections() {
+            for conn in tcp_connections {
+                if conn.local_port == port {
+                    results.push(PortInfo {
+                        port: conn.local_port,
+                        protocol: "TCP".to_string(),
+                        state: conn.state,
+                        local_address: conn.local_address,
+                        remote_address: conn.remote_address,
+                        pid: conn.pid,
+                    });
+                }
+            }
+        }
+    }
+
+    if protocol.is_none() || protocol.as_deref() == Some("UDP") {
+        if let Ok(udp_listeners) = get_udp_listeners() {
+            for listener in udp_listeners {
+                if listener.port == port {
+                    results.push(listener);
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+// 查询端口范围（IPv4 + IPv6）
+pub fn query_port_range(start: u16, end: u16) -> Result<Vec<PortInfo>, String> {
+    let mut results = Vec::new();
+
+    if let Ok(tcp_connections) = get_tcp_connections() {
         for conn in tcp_connections {
-            if conn.local_port == port {
+            if conn.local_port >= start && conn.local_port <= end {
                 results.push(PortInfo {
                     port: conn.local_port,
                     protocol: "TCP".to_string(),
@@ -159,39 +352,11 @@ pub fn query_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo>, 
         }
     }
 
-    if protocol.is_none() || protocol.as_deref() == Some("UDP") {
-        let udp_listeners = get_udp_listeners()?;
+    if let Ok(udp_listeners) = get_udp_listeners() {
         for listener in udp_listeners {
-            if listener.port == port {
+            if listener.port >= start && listener.port <= end {
                 results.push(listener);
             }
-        }
-    }
-
-    Ok(results)
-}
-
-pub fn query_port_range(start: u16, end: u16) -> Result<Vec<PortInfo>, String> {
-    let mut results = Vec::new();
-
-    let tcp_connections = get_tcp_connections()?;
-    for conn in tcp_connections {
-        if conn.local_port >= start && conn.local_port <= end {
-            results.push(PortInfo {
-                port: conn.local_port,
-                protocol: "TCP".to_string(),
-                state: conn.state,
-                local_address: conn.local_address,
-                remote_address: conn.remote_address,
-                pid: conn.pid,
-            });
-        }
-    }
-
-    let udp_listeners = get_udp_listeners()?;
-    for listener in udp_listeners {
-        if listener.port >= start && listener.port <= end {
-            results.push(listener);
         }
     }
 

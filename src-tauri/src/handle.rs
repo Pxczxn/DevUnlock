@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use windows::Win32::Foundation::{HANDLE, CloseHandle, NTSTATUS, STATUS_SUCCESS, STATUS_INFO_LENGTH_MISMATCH, BOOL};
 use windows::Win32::System::Threading::{
     OpenProcess, GetCurrentProcess,
-    PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION
+    PROCESS_DUP_HANDLE
 };
 use windows::Win32::Storage::FileSystem::{GetFileType, GetFinalPathNameByHandleW, FILE_TYPE_DISK, FILE_NAME_NORMALIZED};
 
@@ -23,28 +23,34 @@ extern "system" {
 
 const DUPLICATE_SAME_ACCESS: u32 = 0x00000002;
 
-// NT API 结构体定义
+// NT API 结构体定义 - 使用扩展版本支持 64 位
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct SYSTEM_HANDLE_TABLE_ENTRY_INFO {
-    process_id: u16,
-    creator_back_trace_index: u16,
-    object_type_index: u8,
-    handle_attributes: u8,
-    handle_value: u16,
+struct SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX {
     object: *mut std::ffi::c_void,
+    unique_process_id: usize,
+    handle_value: usize,
     granted_access: u32,
+    creator_back_trace_index: u16,
+    object_type_index: u16,
+    handle_attributes: u32,
+    reserved: u32,
 }
 
 #[repr(C)]
-struct SYSTEM_HANDLE_INFORMATION {
-    number_of_handles: u32,
-    handles: [SYSTEM_HANDLE_TABLE_ENTRY_INFO; 1],
+struct SYSTEM_HANDLE_INFORMATION_EX {
+    number_of_handles: usize,
+    reserved: usize,
+    handles: [SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX; 1],
 }
 
-const SYSTEM_HANDLE_INFORMATION: u32 = 16;
+const SYSTEM_EXTENDED_HANDLE_INFORMATION: u32 = 64;
 
-// 动态加载 NtQuerySystemInformation
+// 动态加载 NtQuerySystemInformation - 使用 OnceLock 缓存
+use std::sync::OnceLock;
+
+static NT_QUERY_SYSTEM_INFO: OnceLock<Option<NtQuerySystemInformationFn>> = OnceLock::new();
+
 #[allow(non_snake_case)]
 type NtQuerySystemInformationFn = unsafe extern "system" fn(
     SystemInformationClass: u32,
@@ -54,18 +60,25 @@ type NtQuerySystemInformationFn = unsafe extern "system" fn(
 ) -> NTSTATUS;
 
 fn get_nt_query_system_information() -> Option<NtQuerySystemInformationFn> {
-    unsafe {
-        let ntdll = windows::Win32::System::LibraryLoader::LoadLibraryA(
-            windows::core::s!("ntdll.dll")
-        ).ok()?;
+    *NT_QUERY_SYSTEM_INFO.get_or_init(|| unsafe {
+        // 使用 GetModuleHandleW 而不是 LoadLibraryA，ntdll.dll 已经加载
+        let ntdll = match windows::Win32::System::LibraryLoader::GetModuleHandleW(
+            windows::core::w!("ntdll.dll")
+        ) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
         
-        let proc = windows::Win32::System::LibraryLoader::GetProcAddress(
+        let proc = match windows::Win32::System::LibraryLoader::GetProcAddress(
             ntdll,
             windows::core::s!("NtQuerySystemInformation")
-        )?;
+        ) {
+            Some(p) => p,
+            None => return None,
+        };
         
         Some(std::mem::transmute(proc))
-    }
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,12 +114,12 @@ impl Drop for AutoHandle {
 }
 
 // 查询系统所有 Handle
-fn query_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO>, String> {
+fn query_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>, String> {
     let nt_query = get_nt_query_system_information()
         .ok_or("Failed to load NtQuerySystemInformation")?;
     
     unsafe {
-        let mut buffer_size = 1024 * 1024; // 1MB 初始大小
+        let mut buffer_size = 2 * 1024 * 1024; // 2MB 初始大小
         let mut buffer: Vec<u8>;
         let mut return_length: u32 = 0;
         
@@ -114,7 +127,7 @@ fn query_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO>, String>
             buffer = vec![0u8; buffer_size];
             
             let status = nt_query(
-                SYSTEM_HANDLE_INFORMATION,
+                SYSTEM_EXTENDED_HANDLE_INFORMATION,
                 buffer.as_mut_ptr() as *mut _,
                 buffer_size as u32,
                 &mut return_length,
@@ -130,11 +143,11 @@ fn query_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO>, String>
             }
         }
         
-        let info = &*(buffer.as_ptr() as *const SYSTEM_HANDLE_INFORMATION);
-        let handle_count = info.number_of_handles as usize;
+        let info = &*(buffer.as_ptr() as *const SYSTEM_HANDLE_INFORMATION_EX);
+        let handle_count = info.number_of_handles;
         
         // 复制所有 Handle 信息
-        let handles_ptr = &info.handles as *const _ as *const SYSTEM_HANDLE_TABLE_ENTRY_INFO;
+        let handles_ptr = &info.handles as *const _ as *const SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX;
         let handles = std::slice::from_raw_parts(handles_ptr, handle_count);
         
         Ok(handles.to_vec())
@@ -142,7 +155,7 @@ fn query_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO>, String>
 }
 
 // 获取 Handle 的文件路径
-fn get_handle_path(process_handle: HANDLE, handle_value: u16) -> Option<String> {
+fn get_handle_path(process_handle: HANDLE, handle_value: usize) -> Option<String> {
     unsafe {
         // 复制 Handle 到当前进程
         let mut duplicated_handle = HANDLE::default();
@@ -220,9 +233,9 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
     let all_handles = query_system_handles()?;
     
     // 按 PID 分组
-    let mut handles_by_pid: HashMap<u32, Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO>> = HashMap::new();
+    let mut handles_by_pid: HashMap<u32, Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>> = HashMap::new();
     for handle in all_handles {
-        let pid = handle.process_id as u32;
+        let pid = handle.unique_process_id as u32;
         handles_by_pid.entry(pid).or_insert_with(Vec::new).push(handle);
     }
     
@@ -232,9 +245,9 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
     unsafe {
         // 遍历每个进程
         for (pid, handles) in handles_by_pid {
-            // 打开进程
+            // 打开进程 - 只需要 PROCESS_DUP_HANDLE 权限
             let process = match OpenProcess(
-                PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION,
+                PROCESS_DUP_HANDLE,
                 false,
                 pid,
             ) {
@@ -250,15 +263,14 @@ pub fn query_path_occupation(path: &str) -> Result<Vec<PathOccupation>, String> 
                     // 检查路径是否匹配
                     if is_path_match(&file_path, &normalized_target) {
                         let entry = results.entry(pid).or_insert_with(|| {
-                            let process_name = crate::process::get_process_path(pid)
-                                .unwrap_or_default()
+                            let process_path = crate::process::get_process_path(pid)
+                                .unwrap_or_default();
+                            
+                            let process_name = process_path
                                 .rsplit('\\')
                                 .next()
                                 .unwrap_or("Unknown")
                                 .to_string();
-                            
-                            let process_path = crate::process::get_process_path(pid)
-                                .unwrap_or_default();
                             
                             PathOccupation {
                                 pid,
