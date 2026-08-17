@@ -25,6 +25,26 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
     }
   }, [initialQuery]);
 
+  // 刷新当前目标（根据类型自动选择 queryPath 或 queryFile）
+  const refreshCurrentTarget = async (): Promise<PathOccupation[]> => {
+    if (!path) return [];
+    
+    try {
+      // 判断是目录还是文件
+      const isDir = await pathApi.isDirectory(path);
+      
+      if (isDir) {
+        return await pathApi.queryPath(path);
+      } else {
+        return await pathApi.queryFile(path);
+      }
+    } catch (err) {
+      // 如果判断失败，默认使用 queryPath
+      console.warn('Failed to determine path type, using queryPath:', err);
+      return await pathApi.queryPath(path);
+    }
+  };
+
   // 获取全选状态
   const getSelectAllState = (): 'none' | 'partial' | 'all' => {
     const killable = getKillableProcesses(results);
@@ -113,7 +133,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       await new Promise(resolve => setTimeout(resolve, 300));
       
       // 重新查询真实状态
-      const newResults = await pathApi.queryPath(path);
+      const newResults = await refreshCurrentTarget();
       setResults(newResults);
     } catch (err) {
       alert(`结束进程失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -130,7 +150,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       await new Promise(resolve => setTimeout(resolve, 300));
       
       // 重新查询真实状态
-      const newResults = await pathApi.queryPath(path);
+      const newResults = await refreshCurrentTarget();
       setResults(newResults);
     } catch (err) {
       alert(`结束进程树失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -160,7 +180,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       await new Promise(resolve => setTimeout(resolve, 300));
       
       // 重新查询真实状态
-      const newResults = await pathApi.queryPath(path);
+      const newResults = await refreshCurrentTarget();
       setResults(newResults);
       setSelectedPids(new Set());
       
@@ -207,7 +227,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // 重新查询真实状态
-      const newResults = await pathApi.queryPath(path);
+      const newResults = await refreshCurrentTarget();
       setResults(newResults);
       setSelectedPids(new Set());
       

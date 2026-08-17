@@ -34,10 +34,9 @@ export interface HandleInfo {
 export const isProtectedProcess = (process: PathOccupation): boolean => {
   const name = process.process_name.toLowerCase();
   
-  // 检查是否在保护列表中
-  return PROTECTED_PROCESSES.some(protectedName => 
-    name === protectedName || name.includes(protectedName)
-  );
+  // 精确匹配，不使用 includes 避免误判
+  // 例如：system 不应该匹配 SystemSettings.exe
+  return PROTECTED_PROCESSES.includes(name);
 };
 
 /**
