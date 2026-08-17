@@ -4,10 +4,12 @@ use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::ProcessStatus::{GetModuleFileNameExA, K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{
-    OpenProcess, TerminateProcess, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
+    OpenProcess, TerminateProcess, QueryFullProcessImageNameW,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, PROCESS_NAME_WIN32,
 };
+use windows::core::PWSTR;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -65,18 +67,28 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 pub fn get_process_path(pid: u32) -> Result<String, String> {
     unsafe {
         let process = OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            PROCESS_QUERY_LIMITED_INFORMATION,
             false,
             pid,
         )
         .map_err(|e| format!("Failed to open process: {:?}", e))?;
 
-        let mut buffer = vec![0u8; 1024];
-        let len = GetModuleFileNameExA(process, None, &mut buffer);
+        let mut buffer = vec![0u16; 32768]; // MAX_PATH * 8
+        let mut size = buffer.len() as u32;
+        
+        let result = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        );
+        
         let _ = CloseHandle(process);
 
-        if len > 0 {
-            Ok(String::from_utf8_lossy(&buffer[..len as usize]).to_string())
+        if result.is_ok() && size > 0 {
+            // 转换 UTF-16 到 String
+            let path = String::from_utf16_lossy(&buffer[..size as usize]);
+            Ok(path)
         } else {
             Err("Failed to get process path".to_string())
         }
@@ -86,7 +98,7 @@ pub fn get_process_path(pid: u32) -> Result<String, String> {
 pub fn get_process_memory(pid: u32) -> Result<u64, String> {
     unsafe {
         let process = OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
             false,
             pid,
         )
@@ -128,10 +140,11 @@ pub fn is_system_critical_process(pid: u32, name: &str) -> bool {
         return true;
     }
     
-    // 检查进程名称
+    // 精确匹配进程名称，不使用 starts_with 避免误判
+    // 例如：system 不应该匹配 SystemSettings.exe
     let name_lower = name.to_lowercase();
     SYSTEM_CRITICAL_PROCESSES.iter().any(|&critical| {
-        name_lower == critical || name_lower.starts_with(critical)
+        name_lower == critical
     })
 }
 
