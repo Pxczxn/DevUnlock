@@ -44,6 +44,7 @@ export interface ScanDiagnostics {
   handles_duplicated: number;
   handles_resolved: number;
   handles_matched: number;
+  elapsedMs?: number;
 }
 
 export interface PathOccupationResult {

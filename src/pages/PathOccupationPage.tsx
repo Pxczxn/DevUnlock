@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, FolderOpen, AlertCircle, Trash2, Shield, ChevronDown, ChevronUp } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { pathApi, processApi } from '../api';
 import { saveQueryHistory } from '../historyUtils';
 import { isProtectedProcess, getKillableProcesses, getProtectedProcesses } from '../processProtection';
@@ -19,14 +20,77 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedPids, setSelectedPids] = useState<Set<number>>(new Set());
   const [expandedPids, setExpandedPids] = useState<Set<number>>(new Set());
+  const [isDragging, setIsDragging] = useState(false);
 
   // 自动执行查询
   useEffect(() => {
     if (initialQuery) {
       setInputPath(initialQuery);
-      handleQueryWithPath(initialQuery);
+      queryTarget(initialQuery);
     }
   }, [initialQuery]);
+
+  // 统一查询入口
+  const queryTarget = async (rawPath: string) => {
+    const target = rawPath.trim();
+
+    // 早期验证
+    if (!target) {
+      setError('请输入路径');
+      return;
+    }
+
+    // 设置加载状态并清空之前的结果
+    setLoading(true);
+    setError(null);
+    setResults([]);
+    setSelectedPids(new Set());
+    setExpandedPids(new Set());
+
+    const startedAt = performance.now();
+
+    try {
+      // 验证路径存在性
+      const exists = await pathApi.validate(target);
+      if (!exists) {
+        setError('路径不存在');
+        return;
+      }
+
+      // 判断类型
+      const isDir = await pathApi.isDirectory(target);
+
+      // 查询后端
+      const result = isDir 
+        ? await pathApi.queryPath(target)
+        : await pathApi.queryFile(target);
+
+      // 计算耗时
+      const elapsedMs = Math.round(performance.now() - startedAt);
+
+      // 按句柄数量降序排序
+      const sortedOccupations = result.occupations.sort(
+        (a, b) => b.handle_count - a.handle_count
+      );
+
+      // 更新状态
+      setResults(sortedOccupations);
+      setDiagnostics({ ...result.diagnostics, elapsedMs });
+      setActiveTarget(target);
+
+      // 保存到历史记录
+      saveQueryHistory(isDir ? 'directory' : 'file', target);
+
+      // 处理空结果
+      if (sortedOccupations.length === 0) {
+        setError('未发现占用该路径的进程');
+      }
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // 刷新当前目标（根据类型自动选择 queryPath 或 queryFile）
   const refreshCurrentTarget = async (): Promise<PathOccupation[]> => {
@@ -90,52 +154,78 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
     });
   };
 
-  const handleQueryWithPath = async (queryPath: string) => {
-    if (!queryPath.trim()) {
-      setError('请输入路径');
-      return;
-    }
+  const handleQuery = () => queryTarget(inputPath);
 
-    setLoading(true);
-    setError(null);
-    setResults([]);
-    setSelectedPids(new Set());
-    setExpandedPids(new Set()); // 清空展开状态
+  // 文件/文件夹选择器
+  const handleBrowse = async () => {
+    // 防止并发操作
+    if (loading) return;
 
     try {
-      const exists = await pathApi.validate(queryPath);
-      if (!exists) {
-        setError('路径不存在');
-        setLoading(false);
-        return;
-      }
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: '选择文件或文件夹',
+        defaultPath: inputPath || undefined
+      });
 
-      const isDir = await pathApi.isDirectory(queryPath);
-      const result = isDir 
-        ? await pathApi.queryPath(queryPath)
-        : await pathApi.queryFile(queryPath);
-      
-      // 按句柄数量降序排序
-      const sortedOccupations = result.occupations.sort((a, b) => b.handle_count - a.handle_count);
-      
-      setResults(sortedOccupations);
-      setDiagnostics(result.diagnostics);
-      setActiveTarget(queryPath); // 设置当前活动目标
-      
-      // 保存到历史记录
-      saveQueryHistory(isDir ? 'directory' : 'file', queryPath);
-      
-      if (result.occupations.length === 0) {
-        setError('未发现占用该路径的进程');
+      if (selected && typeof selected === 'string') {
+        setInputPath(selected);
+        await queryTarget(selected);
       }
     } catch (err) {
+      console.error('File dialog error:', err);
       setError(formatError(err));
-    } finally {
-      setLoading(false);
     }
   };
 
-  const handleQuery = () => handleQueryWithPath(inputPath);
+  // 拖拽事件处理
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!loading) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (loading) return;
+
+    const files = e.dataTransfer.files;
+
+    if (files.length === 0) return;
+
+    // 获取第一个文件/文件夹路径
+    const firstFile = files[0];
+    const path = (firstFile as any).path;
+
+    if (!path) {
+      setError('无法获取文件路径');
+      return;
+    }
+
+    // 处理多个文件拖拽（提示只处理第一个）
+    if (files.length > 1) {
+      setTimeout(() => {
+        alert(`当前仅支持单个目标，已查询 ${firstFile.name}`);
+      }, 100);
+    }
+
+    setInputPath(path);
+    await queryTarget(path);
+  };
 
   const handleKillProcess = async (pid: number) => {
     if (!confirm(`确定要结束进程 ${pid} 吗？`)) return;
@@ -311,16 +401,75 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
   return (
     <>
       <div className="header">
-        <div className="search-bar">
-          <input
-            type="text"
-            className="search-input"
-            placeholder="输入目录或文件路径，例如：D:\Coding\project\xingyu-community"
-            value={inputPath}
-            onChange={(e) => setInputPath(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
-          />
-          <button className="btn btn-primary" onClick={handleQuery} disabled={loading}>
+        <div 
+          className="search-bar"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          style={{
+            borderRadius: '12px',
+            padding: isDragging ? '20px' : '0',
+            border: isDragging ? '2px dashed var(--accent-color)' : 'none',
+            backgroundColor: isDragging ? 'rgba(37, 99, 235, 0.05)' : 'transparent',
+            transition: 'all 0.2s ease',
+            position: 'relative'
+          }}
+        >
+          {isDragging && (
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '14px',
+              color: 'var(--accent-color)',
+              pointerEvents: 'none',
+              zIndex: 10
+            }}>
+              📁 松开以查询
+            </div>
+          )}
+          
+          <div style={{ position: 'relative', flex: 1 }}>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="输入目录或文件路径，例如：D:\Coding\project\xingyu-community"
+              value={inputPath}
+              onChange={(e) => setInputPath(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !loading && queryTarget(inputPath)}
+              disabled={loading}
+              style={{ paddingRight: '48px' }}
+            />
+            <button
+              onClick={handleBrowse}
+              disabled={loading}
+              style={{
+                position: 'absolute',
+                right: '8px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.5 : 1,
+                fontSize: '18px',
+                padding: '4px'
+              }}
+              title="选择文件或文件夹"
+            >
+              📁
+            </button>
+          </div>
+          <button 
+            className="btn btn-primary" 
+            onClick={handleQuery} 
+            disabled={loading}
+          >
             <Search size={18} />
             {loading ? '查询中...' : '查询'}
           </button>
@@ -331,7 +480,10 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
         {loading && (
           <div className="loading">
             <div className="spinner"></div>
-            <p>正在扫描系统资源...</p>
+            <p>正在扫描系统 Handle...</p>
+            <p style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
+              这可能需要几秒
+            </p>
           </div>
         )}
 
@@ -352,6 +504,7 @@ function PathOccupationPage({ initialQuery }: PathOccupationPageProps) {
                   </h2>
                   <p className="text-muted" style={{ fontSize: '14px' }}>
                     共 {results.reduce((sum, r) => sum + r.handle_count, 0)} 个关联句柄
+                    {diagnostics?.elapsedMs && ` · 扫描耗时 ${diagnostics.elapsedMs} ms`}
                   </p>
                   {diagnostics && (
                     <p className="text-muted" style={{ fontSize: '12px', marginTop: '4px' }}>
