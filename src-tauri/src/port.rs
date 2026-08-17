@@ -147,34 +147,13 @@ fn get_tcp_connections_v6() -> Result<Vec<TcpConnection>, String> {
 
 // 合并 IPv4 和 IPv6 TCP 连接
 pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
-    let mut all_connections = Vec::new();
-    let mut v4_failed = false;
-    let mut v6_failed = false;
+    // 严格模式：两个协议族都必须成功
+    let v4 = get_tcp_connections_v4()?;
+    let v6 = get_tcp_connections_v6()?;
     
-    // IPv4
-    match get_tcp_connections_v4() {
-        Ok(v4) => all_connections.extend(v4),
-        Err(e) => {
-            v4_failed = true;
-            eprintln!("TCP IPv4 query failed: {}", e);
-        }
-    }
+    let mut all_connections = v4;
+    all_connections.extend(v6);
     
-    // IPv6
-    match get_tcp_connections_v6() {
-        Ok(v6) => all_connections.extend(v6),
-        Err(e) => {
-            v6_failed = true;
-            eprintln!("TCP IPv6 query failed: {}", e);
-        }
-    }
-    
-    // 如果两个协议族都失败，返回错误
-    if v4_failed && v6_failed {
-        return Err("无法查询 TCP 连接（IPv4 和 IPv6 均失败）".to_string());
-    }
-    
-    // 至少一个成功，返回结果（可能为空数组，表示真的没有连接）
     Ok(all_connections)
 }
 
@@ -292,34 +271,13 @@ fn get_udp_listeners_v6() -> Result<Vec<PortInfo>, String> {
 
 // 合并 IPv4 和 IPv6 UDP 监听
 pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
-    let mut all_listeners = Vec::new();
-    let mut v4_failed = false;
-    let mut v6_failed = false;
+    // 严格模式：两个协议族都必须成功
+    let v4 = get_udp_listeners_v4()?;
+    let v6 = get_udp_listeners_v6()?;
     
-    // IPv4
-    match get_udp_listeners_v4() {
-        Ok(v4) => all_listeners.extend(v4),
-        Err(e) => {
-            v4_failed = true;
-            eprintln!("UDP IPv4 query failed: {}", e);
-        }
-    }
+    let mut all_listeners = v4;
+    all_listeners.extend(v6);
     
-    // IPv6
-    match get_udp_listeners_v6() {
-        Ok(v6) => all_listeners.extend(v6),
-        Err(e) => {
-            v6_failed = true;
-            eprintln!("UDP IPv6 query failed: {}", e);
-        }
-    }
-    
-    // 如果两个协议族都失败，返回错误
-    if v4_failed && v6_failed {
-        return Err("无法查询 UDP 监听（IPv4 和 IPv6 均失败）".to_string());
-    }
-    
-    // 至少一个成功，返回结果（可能为空数组，表示真的没有监听）
     Ok(all_listeners)
 }
 
