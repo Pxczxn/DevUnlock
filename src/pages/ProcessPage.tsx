@@ -13,6 +13,7 @@ interface ProcessPageProps {
 
 function ProcessPage({ initialQuery }: ProcessPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [lastSubmittedQuery, setLastSubmittedQuery] = useState(''); // 追踪已提交的查询
   const [loading, setLoading] = useState(false);
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [filteredProcesses, setFilteredProcesses] = useState<ProcessInfo[]>([]);
@@ -26,9 +27,13 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
   useEffect(() => {
     if (initialQuery) {
       setSearchQuery(initialQuery);
+      setLastSubmittedQuery(initialQuery);
+      // 保存初始查询到历史
+      saveQueryHistory('process', initialQuery);
     }
   }, [initialQuery]);
 
+  // 实时过滤，不保存历史
   useEffect(() => {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -38,13 +43,19 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
         p.pid.toString().includes(query)
       );
       setFilteredProcesses(filtered);
-      
-      // 保存搜索历史
-      saveQueryHistory('process', searchQuery);
     } else {
       setFilteredProcesses(processes);
     }
   }, [searchQuery, processes]);
+
+  // 处理搜索提交（Enter 或失焦）
+  const handleSearchSubmit = () => {
+    const trimmed = searchQuery.trim();
+    if (trimmed && trimmed !== lastSubmittedQuery) {
+      saveQueryHistory('process', trimmed);
+      setLastSubmittedQuery(trimmed);
+    }
+  };
 
   const loadProcesses = async () => {
     setLoading(true);
@@ -108,6 +119,8 @@ function ProcessPage({ initialQuery }: ProcessPageProps) {
             placeholder="搜索进程名称、PID 或路径..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit()}
+            onBlur={handleSearchSubmit}
           />
           <button className="btn btn-primary" onClick={loadProcesses} disabled={loading}>
             <Search size={18} />

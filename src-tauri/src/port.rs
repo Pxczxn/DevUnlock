@@ -148,21 +148,33 @@ fn get_tcp_connections_v6() -> Result<Vec<TcpConnection>, String> {
 // 合并 IPv4 和 IPv6 TCP 连接
 pub fn get_tcp_connections() -> Result<Vec<TcpConnection>, String> {
     let mut all_connections = Vec::new();
+    let mut v4_failed = false;
+    let mut v6_failed = false;
     
     // IPv4
-    if let Ok(v4) = get_tcp_connections_v4() {
-        all_connections.extend(v4);
+    match get_tcp_connections_v4() {
+        Ok(v4) => all_connections.extend(v4),
+        Err(e) => {
+            v4_failed = true;
+            eprintln!("TCP IPv4 query failed: {}", e);
+        }
     }
     
     // IPv6
-    if let Ok(v6) = get_tcp_connections_v6() {
-        all_connections.extend(v6);
+    match get_tcp_connections_v6() {
+        Ok(v6) => all_connections.extend(v6),
+        Err(e) => {
+            v6_failed = true;
+            eprintln!("TCP IPv6 query failed: {}", e);
+        }
     }
     
-    if all_connections.is_empty() {
-        return Err("Failed to get any TCP connections".to_string());
+    // 如果两个协议族都失败，返回错误
+    if v4_failed && v6_failed {
+        return Err("无法查询 TCP 连接（IPv4 和 IPv6 均失败）".to_string());
     }
     
+    // 至少一个成功，返回结果（可能为空数组，表示真的没有连接）
     Ok(all_connections)
 }
 
@@ -281,113 +293,101 @@ fn get_udp_listeners_v6() -> Result<Vec<PortInfo>, String> {
 // 合并 IPv4 和 IPv6 UDP 监听
 pub fn get_udp_listeners() -> Result<Vec<PortInfo>, String> {
     let mut all_listeners = Vec::new();
+    let mut v4_failed = false;
+    let mut v6_failed = false;
     
     // IPv4
-    if let Ok(v4) = get_udp_listeners_v4() {
-        all_listeners.extend(v4);
+    match get_udp_listeners_v4() {
+        Ok(v4) => all_listeners.extend(v4),
+        Err(e) => {
+            v4_failed = true;
+            eprintln!("UDP IPv4 query failed: {}", e);
+        }
     }
     
     // IPv6
-    if let Ok(v6) = get_udp_listeners_v6() {
-        all_listeners.extend(v6);
+    match get_udp_listeners_v6() {
+        Ok(v6) => all_listeners.extend(v6),
+        Err(e) => {
+            v6_failed = true;
+            eprintln!("UDP IPv6 query failed: {}", e);
+        }
     }
     
-    if all_listeners.is_empty() {
-        return Err("Failed to get any UDP listeners".to_string());
+    // 如果两个协议族都失败，返回错误
+    if v4_failed && v6_failed {
+        return Err("无法查询 UDP 监听（IPv4 和 IPv6 均失败）".to_string());
     }
     
+    // 至少一个成功，返回结果（可能为空数组，表示真的没有监听）
     Ok(all_listeners)
 }
 
 // 查询指定端口（IPv4 + IPv6）
 pub fn query_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo>, String> {
     let mut results = Vec::new();
-    let mut tcp_failed = false;
-    let mut udp_failed = false;
+    let query_tcp = protocol.is_none() || protocol.as_deref() == Some("TCP");
+    let query_udp = protocol.is_none() || protocol.as_deref() == Some("UDP");
 
-    if protocol.is_none() || protocol.as_deref() == Some("TCP") {
-        match get_tcp_connections() {
-            Ok(tcp_connections) => {
-                for conn in tcp_connections {
-                    if conn.local_port == port {
-                        results.push(PortInfo {
-                            port: conn.local_port,
-                            protocol: "TCP".to_string(),
-                            state: conn.state,
-                            local_address: conn.local_address,
-                            remote_address: conn.remote_address,
-                            pid: conn.pid,
-                        });
-                    }
-                }
+    // 查询 TCP
+    if query_tcp {
+        let tcp_connections = get_tcp_connections()?; // 失败直接返回错误
+        for conn in tcp_connections {
+            if conn.local_port == port {
+                results.push(PortInfo {
+                    port,
+                    protocol: "TCP".to_string(),
+                    state: conn.state,
+                    local_address: conn.local_address,
+                    remote_address: conn.remote_address,
+                    pid: conn.pid,
+                });
             }
-            Err(_) => tcp_failed = true,
-        }
-    }
-
-    if protocol.is_none() || protocol.as_deref() == Some("UDP") {
-        match get_udp_listeners() {
-            Ok(udp_listeners) => {
-                for listener in udp_listeners {
-                    if listener.port == port {
-                        results.push(listener);
-                    }
-                }
-            }
-            Err(_) => udp_failed = true,
         }
     }
     
-    // 如果所有协议栈都查询失败，返回错误
-    if tcp_failed && udp_failed {
-        return Err("无法查询 TCP 和 UDP 端口信息".to_string());
+    // 查询 UDP
+    if query_udp {
+        let udp_listeners = get_udp_listeners()?; // 失败直接返回错误
+        for listener in udp_listeners {
+            if listener.port == port {
+                results.push(listener);
+            }
+        }
     }
     
-    // 如果部分失败但有结果，继续返回（partial success）
-    // 如果查询成功但结果为空，返回空数组（真的未占用）
+    // 查询成功，结果为空表示端口真的未占用
     Ok(results)
 }
 
 // 查询端口范围（IPv4 + IPv6）
 pub fn query_port_range(start: u16, end: u16) -> Result<Vec<PortInfo>, String> {
     let mut results = Vec::new();
-    let mut tcp_failed = false;
-    let mut udp_failed = false;
 
-    match get_tcp_connections() {
-        Ok(tcp_connections) => {
-            for conn in tcp_connections {
-                if conn.local_port >= start && conn.local_port <= end {
-                    results.push(PortInfo {
-                        port: conn.local_port,
-                        protocol: "TCP".to_string(),
-                        state: conn.state,
-                        local_address: conn.local_address,
-                        remote_address: conn.remote_address,
-                        pid: conn.pid,
-                    });
-                }
-            }
+    // 查询 TCP - 失败直接返回错误
+    let tcp_connections = get_tcp_connections()?;
+    for conn in tcp_connections {
+        if conn.local_port >= start && conn.local_port <= end {
+            results.push(PortInfo {
+                port: conn.local_port,
+                protocol: "TCP".to_string(),
+                state: conn.state,
+                local_address: conn.local_address,
+                remote_address: conn.remote_address,
+                pid: conn.pid,
+            });
         }
-        Err(_) => tcp_failed = true,
     }
 
-    match get_udp_listeners() {
-        Ok(udp_listeners) => {
-            for listener in udp_listeners {
-                if listener.port >= start && listener.port <= end {
-                    results.push(listener);
-                }
-            }
+    // 查询 UDP - 失败直接返回错误
+    let udp_listeners = get_udp_listeners()?;
+    for listener in udp_listeners {
+        if listener.port >= start && listener.port <= end {
+            results.push(listener);
         }
-        Err(_) => udp_failed = true,
     }
     
-    // 如果所有协议栈都查询失败，返回错误
-    if tcp_failed && udp_failed {
-        return Err("无法查询 TCP 和 UDP 端口信息".to_string());
-    }
-
+    // 查询成功，结果为空表示范围内端口真的未占用
     Ok(results)
 }
 

@@ -6,9 +6,11 @@ export const saveQueryHistory = (type: 'directory' | 'file' | 'port' | 'process'
     const history = getQueryHistory();
     
     // 检查是否已存在相同的查询
-    const exists = history.some(item => item.type === type && item.query === query);
-    if (exists) {
-      return; // 不重复添加
+    const existingIndex = history.findIndex(item => item.type === type && item.query === query);
+    
+    if (existingIndex !== -1) {
+      // 已存在：移除旧的，添加到顶部并刷新时间戳
+      history.splice(existingIndex, 1);
     }
     
     const newItem: HistoryItem = {
@@ -30,9 +32,12 @@ export const saveQueryHistory = (type: 'directory' | 'file' | 'port' | 'process'
 export const getQueryHistory = (): HistoryItem[] => {
   try {
     const saved = localStorage.getItem('devunlock-history');
-    return saved ? JSON.parse(saved) : [];
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    }
   } catch (err) {
     console.error('Failed to load history:', err);
-    return [];
   }
+  return [];
 };

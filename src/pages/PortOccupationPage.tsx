@@ -38,12 +38,23 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
 
       // Check if it's a port range (e.g., 3000-3010)
       if (trimmedInput.includes('-')) {
-        const [start, end] = trimmedInput.split('-').map(s => parseInt(s.trim()));
-        if (isNaN(start) || isNaN(end) || start < 1 || end > 65535 || start > end) {
-          setError('无效的端口范围，格式应为: 3000-3010');
+        // 严格验证格式：^\d+\s*-\s*\d+$
+        if (!/^\d+\s*-\s*\d+$/.test(trimmedInput)) {
+          setError('无效的端口范围格式，应为: 3000-3010');
           setLoading(false);
           return;
         }
+        
+        const [startStr, endStr] = trimmedInput.split('-').map(s => s.trim());
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+        
+        if (start < 1 || end > 65535 || start > end) {
+          setError('端口范围必须在 1-65535 之间，且起始端口不能大于结束端口');
+          setLoading(false);
+          return;
+        }
+        
         const ports = await portApi.queryRange(start, end);
         // 按端口号升序排序
         const sortedPorts = ports.sort((a, b) => a.port - b.port);
@@ -56,21 +67,27 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
       }
       // Check if it's multiple ports (e.g., 3000,5173,8080)
       else if (trimmedInput.includes(',') || trimmedInput.includes(' ')) {
-        const portList = trimmedInput.split(/[,\s]+/).map(s => s.trim());
+        const portList = trimmedInput.split(/[,\s]+/).map(s => s.trim()).filter(s => s.length > 0);
         
-        // 验证所有端口是否合法
-        const invalidPorts = portList.filter(s => {
-          const p = parseInt(s);
-          return isNaN(p) || p < 1 || p > 65535;
-        });
+        // 严格验证每个端口：必须是纯数字
+        const invalidPorts = portList.filter(s => !/^\d+$/.test(s));
         
         if (invalidPorts.length > 0) {
-          setError(`无效的端口号: ${invalidPorts.join(', ')}`);
+          setError(`无效的端口号格式: ${invalidPorts.join(', ')}`);
           setLoading(false);
           return;
         }
         
-        const ports = portList.map(s => parseInt(s));
+        // 转换并验证范围
+        const ports = portList.map(s => parseInt(s, 10));
+        const outOfRange = ports.filter(p => p < 1 || p > 65535);
+        
+        if (outOfRange.length > 0) {
+          setError(`端口号超出范围 (1-65535): ${outOfRange.join(', ')}`);
+          setLoading(false);
+          return;
+        }
+        
         const allResults = await portApi.queryMultiple(ports);
         // 按端口号升序排序
         const sortedResults = allResults.sort((a, b) => a.port - b.port);
@@ -83,8 +100,15 @@ function PortOccupationPage({ initialQuery }: PortOccupationPageProps) {
       }
       // Single port
       else {
-        const port = parseInt(trimmedInput);
-        if (isNaN(port) || port < 1 || port > 65535) {
+        // 严格验证：必须是纯数字
+        if (!/^\d+$/.test(trimmedInput)) {
+          setError('端口号必须是纯数字');
+          setLoading(false);
+          return;
+        }
+        
+        const port = parseInt(trimmedInput, 10);
+        if (port < 1 || port > 65535) {
           setError('端口范围必须为 1 - 65535');
           setLoading(false);
           return;

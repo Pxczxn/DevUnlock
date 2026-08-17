@@ -52,13 +52,38 @@ fn query_single_port(port: u16, protocol: Option<String>) -> Result<Vec<PortInfo
 
 #[tauri::command]
 fn query_multiple_ports(ports: Vec<u16>) -> Result<Vec<PortInfo>, String> {
+    use std::collections::HashSet;
+    
+    // 一次性获取所有 TCP 和 UDP 信息
+    let tcp_connections = get_tcp_connections()?;
+    let udp_listeners = get_udp_listeners()?;
+    
+    // 构建要查询的端口集合
+    let port_set: HashSet<u16> = ports.into_iter().collect();
+    
     let mut results = Vec::new();
-    for port in ports {
-        match query_port(port, None) {
-            Ok(mut port_infos) => results.append(&mut port_infos),
-            Err(_) => continue,
+    
+    // 过滤 TCP 连接
+    for conn in tcp_connections {
+        if port_set.contains(&conn.local_port) {
+            results.push(PortInfo {
+                port: conn.local_port,
+                protocol: "TCP".to_string(),
+                state: conn.state,
+                local_address: conn.local_address,
+                remote_address: conn.remote_address,
+                pid: conn.pid,
+            });
         }
     }
+    
+    // 过滤 UDP 监听
+    for listener in udp_listeners {
+        if port_set.contains(&listener.port) {
+            results.push(listener);
+        }
+    }
+    
     Ok(results)
 }
 

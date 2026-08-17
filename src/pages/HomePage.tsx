@@ -15,31 +15,36 @@ function HomePage({ onNavigate }: HomePageProps) {
     const query = searchQuery.trim();
     
     // Check if it's a port-related query
-    // 1. Port range: 3000-3010
+    // 1. Port range: 3000-3010 (严格验证)
     if (query.includes('-')) {
-      const [start, end] = query.split('-').map(s => parseInt(s.trim()));
-      if (!isNaN(start) && !isNaN(end) && start >= 1 && end <= 65535 && start <= end) {
-        onNavigate('port', { type: 'port', value: query });
-        return;
+      if (/^\d+\s*-\s*\d+$/.test(query)) {
+        const [startStr, endStr] = query.split('-').map(s => s.trim());
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+        if (start >= 1 && end <= 65535 && start <= end) {
+          onNavigate('port', { type: 'port', value: query });
+          return;
+        }
       }
     }
     
-    // 2. Multiple ports: 3000,5173,8080 or 3000 5173 8080
+    // 2. Multiple ports: 3000,5173,8080 or 3000 5173 8080 (严格验证)
     if (query.includes(',') || /^\d+[\s,]+\d+/.test(query)) {
-      const portList = query.split(/[,\s]+/).map(s => s.trim());
-      const allValid = portList.every(s => {
-        const p = parseInt(s);
-        return !isNaN(p) && p >= 1 && p <= 65535;
-      });
+      const portList = query.split(/[,\s]+/).map(s => s.trim()).filter(s => s.length > 0);
+      const allValid = portList.every(s => /^\d+$/.test(s)) && 
+                       portList.every(s => {
+                         const p = parseInt(s, 10);
+                         return p >= 1 && p <= 65535;
+                       });
       if (allValid && portList.length > 0) {
         onNavigate('port', { type: 'port', value: query });
         return;
       }
     }
     
-    // 3. Single port number
+    // 3. Single port number (严格验证)
     if (/^\d+$/.test(query)) {
-      const port = parseInt(query);
+      const port = parseInt(query, 10);
       if (port >= 1 && port <= 65535) {
         onNavigate('port', { type: 'port', value: query });
         return;
