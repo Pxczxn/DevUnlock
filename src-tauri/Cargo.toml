@@ -1,6 +1,6 @@
 [package]
 name = "devunlock"
-version = "0.1.0"
+version = "0.1.0-beta"
 description = "DevUnlock - Windows process and port occupation management tool"
 authors = ["DevUnlock Team"]
 edition = "2021"

@@ -89,7 +89,7 @@ function SettingsPage() {
               <div style={{ textAlign: 'center', padding: '16px' }}>
                 <Settings size={48} color="var(--accent-color)" style={{ marginBottom: '16px' }} />
                 <div style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>DevUnlock</div>
-                <div className="text-muted" style={{ fontSize: '14px', marginBottom: '16px' }}>版本 0.1.0</div>
+                <div className="text-muted" style={{ fontSize: '14px', marginBottom: '16px' }}>版本 0.1.0-beta</div>
                 <p className="text-muted" style={{ fontSize: '14px', lineHeight: '1.6' }}>
                   Windows 开发环境资源占用查询与释放工具
                 </p>

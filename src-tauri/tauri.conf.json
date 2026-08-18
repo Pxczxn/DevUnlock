@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DevUnlock",
-  "version": "0.1.0",
+  "version": "0.1.0-beta",
   "identifier": "com.devunlock.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "DevUnlock - Windows 资源占用管理工具",
-        "width": 1200,
-        "height": 800,
+        "width": 1100,
+        "height": 700,
         "minWidth": 800,
         "minHeight": 600
       }
@@ -26,6 +26,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "windows": {
+      "wix": {
+        "version": "0.1.0.0"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
